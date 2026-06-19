@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>India Data Jobs</title>
+  <link rel="stylesheet" href="/static/style.css?v=4" />
+</head>
+<body>
+  <header>
+    <h1>India Data Jobs</h1>
+    <p class="sub">Latest <em>Data / AI / ML</em> roles in India from Amazon, Microsoft, Google, Meta, Mastercard, Visa, Citi, JPMorgan, Goldman Sachs, Morgan Stanley, American Express.</p>
+  </header>
+
+  <section class="controls">
+    <label class="grow">
+      Roles (title must match) — comma-separated
+      <input id="roles" type="text" placeholder="data engineer, ai engineer, ..." />
+    </label>
+    <label class="grow">
+      Skills (full-text search) — comma-separated
+      <input id="skills" type="text" placeholder="spark, pyspark, langchain, ..." />
+    </label>
+    <label>
+      Companies
+      <div class="ms" id="company-ms">
+        <button type="button" id="company-toggle" class="ms-toggle">All companies</button>
+        <div class="ms-panel" id="company-panel" hidden>
+          <div class="ms-head">
+            <input type="search" id="company-filter" placeholder="Filter…" />
+            <button type="button" id="company-clear" class="ms-link">Clear all</button>
+          </div>
+          <div class="ms-list" id="company-list"></div>
+        </div>
+      </div>
+    </label>
+    <label>
+      Posted within
+      <select id="posted">
+        <option value="0">Any time</option>
+        <option value="1">Last 24 hours</option>
+        <option value="7">Last 7 days</option>
+        <option value="14">Last 2 weeks</option>
+        <option value="30">Last 30 days</option>
+        <option value="90">Last 3 months</option>
+      </select>
+    </label>
+    <button id="search">Search</button>
+    <button id="refresh" class="secondary">Refresh</button>
+    <span id="status" class="status"></span>
+  </section>
+
+  <section class="sources" id="sources"></section>
+
+  <main>
+    <table id="jobs">
+      <thead>
+        <tr>
+          <th>Posted</th>
+          <th>Company</th>
+          <th>Title</th>
+          <th>Location</th>
+          <th>Link</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </main>
+
+  <script src="/static/app.js?v=14"></script>
+</body>
+</html>

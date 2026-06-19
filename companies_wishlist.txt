@@ -1,0 +1,125 @@
+# Company wishlist for the job aggregator.
+# This is the master list the user wants surfaced in /api/jobs.
+# Status legend:
+#   [x] supported -- HTTP/JSON scraper or SPA target is live in SCRAPERS / SPA_TARGETS
+#   [s] supported via SPA (Playwright) target
+#   [ ] not yet supported -- needs probing / new scraper
+#   [-] attempted but unsupported (see backend/scrapers/spa_runner.py "Removed" block
+#       and backend/scrapers/companies.py for reasons -- anti-bot, TalentBrew, etc.)
+
+# ---- Already supported (HTTP/JSON) ----
+[x] Amex                  (American Express)
+[x] Visa
+[x] Confluent
+[x] Mastercard
+[x] Amazon                (also covers Prime Video)
+[x] Microsoft
+[x] Uber
+[x] Meta
+[x] PepsiCo               (also covers Pepsi)
+[x] Google
+[x] Anthropic
+[x] Expedia
+[x] Airbnb
+[x] Salesforce            (also covers Slack via Salesforce/Slack Workday)
+[x] JP Morgan             (JPMorgan Chase)
+[x] Morgan Stanley
+[x] Deutsche Bank
+[x] Goldman Sachs
+[x] Philips
+[x] OpenAI
+[x] xAI                   (xAI / Twitter careers)
+[x] Citi
+[x] PayPal
+[x] Paytm
+[x] Atlassian
+[x] Walmart
+[x] Razorpay
+[x] Netflix
+[x] Prime Video           (via Amazon)
+[x] Warner Bros           (Warner Bros Discovery)
+[x] Meesho
+[x] Zscaler
+[x] Snowflake
+[x] Zendesk
+[x] MongoDB
+[x] Broadcom              (covers VMware/Broadcom)
+[x] Cloudflare
+[x] Spotify
+[x] PwC
+[x] Adobe
+[x] NVIDIA
+[x] Groww
+[x] Samsung
+[x] Reddit
+[x] Discord
+[x] BlackRock
+[x] Autodesk
+[x] Jane Street
+[x] Disney                (covers Walt Disney)
+[x] Accenture
+[x] DBS
+[x] Slack
+[x] Notion
+
+# ---- Already supported (Playwright SPA) ----
+[s] Apple
+[s] Swiggy
+[s] Flipkart
+[s] Cars24
+[s] Cisco                 (also covers Cisco Webex)
+[s] ServiceNow
+[s] GE Healthcare         (covers GE Healthcare/GE)
+[s] BCG
+[s] Urban Company
+[s] Infosys
+
+# ---- Wanted, not yet attempted -- needs probing ----
+[x] NoBroker            # SmartRecruiters /nobroker
+[-] BookMyShow         # 403 anti-bot on careers SPA
+[s] Optum               # SPA: careers.unitedhealthgroup.com (UHG portal)
+[x] NTT Data            # Workday: nttlimited.wd3 / NTT_Careers (~939 jobs)
+[x] EXL                 # Oracle HCM: fa-ewjt-saasfaprod1 / siteNumber=CX_2
+[s] Deloitte            # SPA: southasiacareers.deloitte.com/go/Deloitte-India/718244/
+[-] Cleartrip           # Same Flipkart TurboHire instance, covered by Flipkart
+[x] Nike                # Workday: nike.wd1 / nke (~65 India jobs)
+[x] Adidas              # Workable XML feed careers.adidas-group.com/jobs/feed.xml (~11 India jobs, mostly retail)
+[s] Tiger Analytics     # SPA: tiger-analytics.sensehq.com/careers (SenseHQ)
+[s] Juspay              # SPA: juspay.io/careers (custom in-house)
+[s] Nykaa               # SPA: careers.nykaa.com (custom in-house)
+[-] Insights Global    # US/Canada staffing firm; "INDIA" search returns US jobs with India delivery team
+[s] Moody's             # SPA: careers.moodys.com (best-effort, anti-bot risk)
+[s] Bain                # SPA: bain.com/careers (custom in-house)
+[s] Bank of America     # SPA: careers.bankofamerica.com (TalentBrew, weak India filter)
+[-] PolicyBazaar        # 404 on /careers; no public ATS endpoint found
+[-] PaisaBazaar         # No ATS — email-only (careers+tech@paisabazaar.com)
+[-] Kotak               # Custom hash-router SPA, no anchors extractable
+[s] FedEx               # SPA: careers.fedex.com (Paradox AI chatbot; anchor extractor weak)
+[-] Splunk              # Acquired by Cisco — already covered by Cisco scraper
+[x] Docker              # Ashby HQ api.ashbyhq.com/posting-api/job-board/docker (43 jobs global, 0 India — no India presence)
+[-] Indeed              # Custom careers SPA, no JSON ATS endpoint
+[-] Domino's            # 403 anti-bot
+[x] GoDaddy             # Greenhouse /godaddy (~3 India jobs)
+[-] McKinsey            # DNS/CDN timeout on careers.mckinsey.com
+[x] KPMG                # Oracle HCM ejgk.fa.em2.oraclecloud.com, 5 sites (CX_1/2/3/1001/3001), ~150+ India jobs
+
+# ---- Attempted and unsupported (see code comments) ----
+[-] BigBasket             (Darwinbox SPA -- Angular bundle, no anchors)
+[-] MakeMyTrip            (heavy SPA, frame detach)
+[-] Barclays              (TalentBrew JS render only)
+[-] UBS                   (anti-bot 403)
+[-] Rapido                (Darwinbox SPA)
+[-] HSBC                  (needs session cookies)
+[-] Agoda                 (needs session)
+[-] Volvo Group           (needs session)
+[-] Myntra                (empty 2KB shell)
+[-] LinkedIn              (auth wall)
+[-] Standard Chartered    (needs session)
+[-] Capital One           (TalentBrew JS render only)
+[-] DoorDash              (403 anti-bot)
+[-] Zomato                (HTTP/2 anti-bot)
+[-] Porter                (Darwinbox SPA)
+[-] Mercedes Benz         (anti-bot 403)
+[-] AngelOne              (Open Positions empty until user click)
+[-] Cognizant             (SuccessFactors anti-bot or empty render)
+[-] Wipro                 (SuccessFactors)

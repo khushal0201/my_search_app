@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs / temp / probe artifacts
+*.log
+*.tmp
+audit.log
+zero_audit.*
+ms_*.json
+ms_*probe*.py
+smoke.json
+smoke.py
+resp.json
+resp1.json
+
+# Local secrets
+.env
+.env.*
