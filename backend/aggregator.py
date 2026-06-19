@@ -41,7 +41,7 @@ _MAX_CONCURRENT = 10  # cap total in-flight HTTP requests across all scrapers
 # after every other company has finished, so the initial /api/jobs stream
 # fills up quickly with the fast feeds. Keep in sync with HEAVY_COMPANIES in
 # frontend/app.js.
-HEAVY_COMPANIES: set[str] = {"Infosys", "PwC", "Accenture", "KPMG"}
+HEAVY_COMPANIES: set[str] = {"Infosys", "PwC", "Accenture", "KPMG", "Target", "Bosch"}
 
 
 async def _run_one(name: str, fn, client: httpx.AsyncClient, query: str,

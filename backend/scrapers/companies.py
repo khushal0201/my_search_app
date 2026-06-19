@@ -1376,6 +1376,162 @@ async def fetch_atlassian(client: httpx.AsyncClient, query: str) -> list[Job]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Round 8 — Tier 1/Tier 2 product, semis, finance, GCC sweep
+# Endpoints verified via probe_atss.py + probe_round2.py.
+# ---------------------------------------------------------------------------
+
+# Workday-backed (one-liner wrappers around _fetch_workday)
+async def fetch_zoom(client, q):
+    return await _fetch_workday(client, "Zoom",
+        "https://zoom.wd5.myworkdayjobs.com", "Zoom", "zoom", q)
+
+async def fetch_crowdstrike(client, q):
+    return await _fetch_workday(client, "CrowdStrike",
+        "https://crowdstrike.wd5.myworkdayjobs.com", "crowdstrikecareers", "crowdstrike", q)
+
+async def fetch_workday_inc(client, q):
+    return await _fetch_workday(client, "Workday",
+        "https://workday.wd5.myworkdayjobs.com", "Workday", "workday", q)
+
+async def fetch_target(client, q):
+    return await _fetch_workday(client, "Target",
+        "https://target.wd5.myworkdayjobs.com", "targetcareers", "target", q)
+
+async def fetch_novartis(client, q):
+    return await _fetch_workday(client, "Novartis",
+        "https://novartis.wd3.myworkdayjobs.com", "Novartis_Careers", "novartis", q)
+
+async def fetch_intel(client, q):
+    return await _fetch_workday(client, "Intel",
+        "https://intel.wd1.myworkdayjobs.com", "External", "intel", q)
+
+async def fetch_cadence(client, q):
+    return await _fetch_workday(client, "Cadence",
+        "https://cadence.wd1.myworkdayjobs.com", "External_Careers", "cadence", q)
+
+async def fetch_boeing(client, q):
+    return await _fetch_workday(client, "Boeing",
+        "https://boeing.wd1.myworkdayjobs.com", "External_Careers", "boeing", q)
+
+async def fetch_astrazeneca(client, q):
+    return await _fetch_workday(client, "AstraZeneca",
+        "https://astrazeneca.wd3.myworkdayjobs.com", "Careers", "astrazeneca", q)
+
+# Greenhouse-backed
+async def fetch_databricks(client, q): return await _fetch_greenhouse(client, "Databricks", "databricks", q)
+async def fetch_stripe(client, q):     return await _fetch_greenhouse(client, "Stripe",     "stripe",     q)
+async def fetch_postman(client, q):    return await _fetch_greenhouse(client, "Postman",    "postman",    q)
+async def fetch_okta(client, q):       return await _fetch_greenhouse(client, "Okta",       "okta",       q)
+async def fetch_twilio(client, q):     return await _fetch_greenhouse(client, "Twilio",     "twilio",     q)
+async def fetch_datadog(client, q):    return await _fetch_greenhouse(client, "Datadog",    "datadog",    q)
+async def fetch_phonepe(client, q):    return await _fetch_greenhouse(client, "PhonePe",    "phonepe",    q)
+
+# Lever-backed
+async def fetch_cred(client, q):       return await _fetch_lever(client, "CRED", "cred", q)
+
+# SmartRecruiters-backed (note Bosch's slug is `boschgroup`, not `bosch`)
+async def fetch_freshworks(client, q): return await _fetch_smartrecruiters(client, "Freshworks", "freshworks", q)
+async def fetch_bosch(client, q):      return await _fetch_smartrecruiters(client, "Bosch",      "boschgroup", q)
+
+
+# GitHub — Phenom-style API at www.github.careers (GitHub.com is owned by
+# Microsoft but the GitHub-branded careers site remains separate).
+async def fetch_github(client: httpx.AsyncClient, query: str) -> list[Job]:
+    url = "https://www.github.careers/api/jobs"
+    out: list[Job] = []
+    for page in range(8):  # ~80 results; totalCount India ~78
+        params = {
+            "stretchUnit": "MILES",
+            "radius": 0,
+            "location": "India",
+            "page": page + 1,
+            "limit": 10,
+        }
+        try:
+            r = await client.get(url, params=params, headers=DEFAULT_HEADERS, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            log.warning("github failed: %s", e)
+            break
+        jobs = data.get("jobs") or []
+        if not jobs:
+            break
+        for wrapper in jobs:
+            j = wrapper.get("data") if isinstance(wrapper, dict) and "data" in wrapper else wrapper
+            if not isinstance(j, dict):
+                continue
+            loc = j.get("full_location") or j.get("location_name") or j.get("short_location") or j.get("country") or ""
+            if not _looks_india(str(loc)):
+                continue
+            title = j.get("title") or ""
+            if query and not _matches_query(title, query):
+                continue
+            slug = j.get("slug") or j.get("req_id") or ""
+            apply_url = j.get("apply_url") or (f"https://www.github.careers/careers-home/jobs/{slug}" if slug else "https://www.github.careers/")
+            out.append(Job(
+                company="GitHub",
+                title=title,
+                location=str(loc) or "India",
+                url=apply_url,
+                posted_at=_parse_dt(j.get("posted_date") or j.get("create_date")),
+                source="github.careers",
+            ))
+        if len(jobs) < 10:
+            break
+    return out
+
+
+# Oracle — Oracle's own HCM at eeho.fa.us2.oraclecloud.com. They use a
+# small set of siteNumbers; CX_1 is the global external site.
+async def fetch_oracle(client: httpx.AsyncClient, query: str) -> list[Job]:
+    base = "https://eeho.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+    out: list[Job] = []
+    seen: set[str] = set()
+    for site in ("CX_1", "CX_2"):
+        for page in range(10):
+            params = {
+                "onlyData": "true",
+                "limit": 100,
+                "offset": page * 100,
+                "expand": "requisitionList.secondaryLocations,requisitionList.requisitionFlexFields",
+                "finder": f"findReqs;siteNumber={site},keyword={query},sortBy=POSTING_DATES_DESC",
+            }
+            try:
+                r = await client.get(base, params=params, headers=DEFAULT_HEADERS, timeout=20)
+                r.raise_for_status()
+                data = r.json()
+                items = data.get("items") or []
+                reqs = items[0].get("requisitionList", []) if items and isinstance(items[0], dict) else []
+                if not reqs:
+                    break
+                added = 0
+                for j in reqs:
+                    jid = j.get("Id") or ""
+                    if jid in seen:
+                        continue
+                    seen.add(jid)
+                    added += 1
+                    loc = j.get("PrimaryLocation") or ""
+                    if not _looks_india(loc):
+                        continue
+                    out.append(Job(
+                        company="Oracle",
+                        title=j.get("Title", ""),
+                        location=loc,
+                        url=f"https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/{site}/job/{jid}/" if jid else "https://www.oracle.com/careers/",
+                        posted_at=_parse_dt(j.get("PostedDate")),
+                        source=f"oracle.com (Oracle HCM/{site})",
+                    ))
+                if added < 100:
+                    break
+            except Exception as e:
+                log.warning("oracle %s page %d failed: %s", site, page, e)
+                break
+    return out
+
+
 # Public registry consumed by the aggregator.
 SCRAPERS = {
     "Amazon": fetch_amazon,
@@ -1445,6 +1601,33 @@ SCRAPERS = {
     # Round 7 — final wishlist gaps
     "Docker": fetch_docker,
     "KPMG": fetch_kpmg,
+    # Round 8 — Tier 1/Tier 2 product, semis, finance, GCC sweep
+    # Workday
+    "Zoom": fetch_zoom,
+    "CrowdStrike": fetch_crowdstrike,
+    "Workday": fetch_workday_inc,
+    "Target": fetch_target,
+    "Novartis": fetch_novartis,
+    "Intel": fetch_intel,
+    "Cadence": fetch_cadence,
+    "Boeing": fetch_boeing,
+    "AstraZeneca": fetch_astrazeneca,
+    # Greenhouse
+    "Databricks": fetch_databricks,
+    "Stripe": fetch_stripe,
+    "Postman": fetch_postman,
+    "Okta": fetch_okta,
+    "Twilio": fetch_twilio,
+    "Datadog": fetch_datadog,
+    "PhonePe": fetch_phonepe,
+    # Lever
+    "CRED": fetch_cred,
+    # SmartRecruiters
+    "Freshworks": fetch_freshworks,
+    "Bosch": fetch_bosch,
+    # Bespoke
+    "GitHub": fetch_github,
+    "Oracle": fetch_oracle,
 }
 
 

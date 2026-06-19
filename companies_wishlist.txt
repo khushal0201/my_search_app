@@ -123,3 +123,48 @@
 [-] AngelOne              (Open Positions empty until user click)
 [-] Cognizant             (SuccessFactors anti-bot or empty render)
 [-] Wipro                 (SuccessFactors)
+
+# ---- Round 8: Tier 1/Tier 2 product / semis / GCC sweep ----
+# HTTP/JSON scrapers
+[x] Databricks            # Greenhouse /databricks
+[x] Stripe                # Greenhouse /stripe
+[x] Postman               # Greenhouse /postman
+[x] Okta                  # Greenhouse /okta
+[x] Twilio                # Greenhouse /twilio
+[x] Datadog               # Greenhouse /datadog
+[x] PhonePe               # Greenhouse /phonepe
+[x] CRED                  # Lever /cred
+[x] Freshworks            # SmartRecruiters /freshworks
+[x] Bosch                 # SmartRecruiters /boschgroup (HEAVY: ~4658 jobs globally)
+[x] Intel                 # Workday intel.wd1 / External
+[x] Cadence               # Workday cadence.wd1 / External_Careers
+[x] Boeing                # Workday boeing.wd1 / External_Careers
+[x] AstraZeneca           # Workday astrazeneca.wd3 / Careers
+[x] Zoom                  # Workday zoom.wd5 / Zoom
+[x] CrowdStrike           # Workday crowdstrike.wd5 / crowdstrikecareers
+[x] Workday               # Workday workday.wd5 / Workday
+[x] Target                # Workday target.wd5 / targetcareers (HEAVY: ~2000 jobs globally)
+[x] Novartis              # Workday novartis.wd3 / Novartis_Careers
+[x] GitHub                # Custom Phenom-style API at www.github.careers
+[x] Oracle                # Oracle HCM eeho.fa.us2.oraclecloud.com sites CX_1/CX_2
+
+# SPA (Playwright) targets - best-effort, may return 0 if anti-bot
+[s] Zoho                  # careers.zohocorp.com (custom)
+[s] Lenskart              # careers.lenskart.com (custom board)
+[s] DE Shaw               # deshawindia.com/careers
+[s] SAP                   # jobs.sap.com (Phenom)
+[s] PharmEasy             # pharmeasy.in/careers
+[s] Ola Electric          # olaelectric.com/careers
+[s] Delhivery             # delhivery.com/careers (Nuxt)
+[s] Dream11               # careers.dream11.com
+[s] Honeywell             # careers.honeywell.com (Phenom anti-bot risk)
+[s] Synopsys              # careers.synopsys.com
+[s] Qualcomm              # careers.qualcomm.com
+[s] Wells Fargo           # wellsfargojobs.com (anti-bot risk)
+[s] Fidelity              # jobs.fidelity.com (anti-bot risk)
+
+# Probed but no public ATS found
+[-] HashiCorp             # Acquired by IBM 2024; careers redirect to IBM portal
+[-] Zerodha               # No public ATS; current API returns 0 listings
+[-] Ola Cabs              # No public ATS endpoint (only Ola Electric SPA)
+

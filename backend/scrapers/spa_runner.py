@@ -346,6 +346,23 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # doc_ids; Playwright with a real Chromium UA gets the rendered page.
     ("Microsoft", "https://jobs.careers.microsoft.com/global/en/search?lc=India&pg=1&pgSz=20", None),
     ("Meta", "https://www.metacareers.com/jobs?offices[0]=India", None),
+    # Round 8 — SPA fallbacks for companies whose HTTP probes returned no clean
+    # JSON ATS (Darwinbox SPAs, custom in-house boards, Phenom anti-bot, etc.).
+    # Each is best-effort: 45s timeout + generic anchor extractor; failures
+    # silently return 0 and never block other companies.
+    ("Zoho", "https://careers.zohocorp.com/jobs/Careers", None),
+    ("Lenskart", "https://careers.lenskart.com/", None),
+    ("DE Shaw", "https://www.deshawindia.com/careers", None),
+    ("SAP", "https://jobs.sap.com/search-jobs/India/results", None),
+    ("PharmEasy", "https://pharmeasy.in/careers", None),
+    ("Ola Electric", "https://www.olaelectric.com/careers", None),
+    ("Delhivery", "https://www.delhivery.com/careers", None),
+    ("Dream11", "https://careers.dream11.com/", None),
+    ("Honeywell", "https://careers.honeywell.com/global/en/search-results?qcountry=India", None),
+    ("Synopsys", "https://careers.synopsys.com/jobs/search?location=India", None),
+    ("Qualcomm", "https://careers.qualcomm.com/careers?location=India&pid=", None),
+    ("Wells Fargo", "https://www.wellsfargojobs.com/en/search-jobs/India", None),
+    ("Fidelity", "https://jobs.fidelity.com/en/search-jobs/India", None),
     # Removed in Round 6 verification sweep:
     #   PaisaBazaar — no ATS at all (email-only: careers+tech@paisabazaar.com).
     #   Cleartrip — shares the Flipkart TurboHire instance, already covered by
