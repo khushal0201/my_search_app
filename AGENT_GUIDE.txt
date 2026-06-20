@@ -1,0 +1,238 @@
+# Agent Guide — Adding & Fixing Company Scrapers
+
+Audience: future Copilot agents working on this repo. This is a runbook,
+not a tutorial. Read this first before touching `backend/scrapers/*.py`.
+
+------------------------------------------------------------------------
+## 0. Repo map (only the bits that matter for scrapers)
+
+    backend/
+      aggregator.py            # fans out queries, dedupes, caches 5h
+      main.py                  # FastAPI app; serves /api/jobs etc.
+      models.py                # Job dataclass (company,title,location,url,posted_at,source)
+      scrapers/
+        companies.py           # all HTTP scrapers + SCRAPERS registry
+        spa_runner.py          # all Playwright (SPA) scrapers + SPA_TARGETS list
+    frontend/                  # static UI; ignore for backend work
+    companies_wishlist.txt     # list of target companies (informational)
+
+Two registries decide whether a company is queried:
+- `SCRAPERS: dict[str, async fn(client, query) -> list[Job]]`  in companies.py
+- `SPA_TARGETS: list[tuple[label, url, extractor|None]]`       in spa_runner.py
+  (every SPA target is auto-registered into SCRAPERS at import time.)
+
+Add a company => add it to exactly ONE of these. Never both.
+
+------------------------------------------------------------------------
+## 1. Decide HTTP vs SPA
+
+Always try HTTP first. SPA costs ~5-30s per cycle and burns memory.
+
+1. Open the company careers page in a real browser, DevTools → Network.
+2. Filter to XHR / Fetch. Reload. Type a search term, change a filter.
+3. Look for a JSON response that contains the job list. If you find one,
+   it is an HTTP scraper. If the page only renders after JS and there is
+   no clean JSON endpoint, it is a Playwright (SPA) scraper.
+4. Repro the JSON call with `httpx.get(url, headers={...}, http2=False)`.
+   If it returns the same JSON, you have an HTTP scraper. Done.
+5. If httpx gets 403 / 1.5KB anti-bot shell / HTTP/2 protocol error, try:
+     * adding `User-Agent: Mozilla/5.0 ...` (same as real Chrome)
+     * dropping cookies
+     * switching to GET-with-finder query string instead of POST body
+   Only fall back to Playwright when all of the above fail.
+
+CRITICAL: always pass `http2=False` to httpx. Several ATS (Phenom,
+Workday, certain Akamai fronts) blackhole HTTP/2 from non-Chrome clients
+with `ERR_HTTP2_PROTOCOL_ERROR`.
+
+------------------------------------------------------------------------
+## 2. Add an HTTP scraper
+
+Pattern lives in `backend/scrapers/companies.py`. Steps:
+
+    async def fetch_<lowercase_company>(
+        client: httpx.AsyncClient, query: str
+    ) -> list[Job]:
+        url = "https://.../api/jobs"
+        params = {"q": query, "limit": 200, "country": "India"}
+        try:
+            r = await client.get(url, params=params, timeout=20.0,
+                                 headers={"User-Agent": UA, "Accept": "application/json"})
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            log.warning("<Company> [%s] failed: %s", query, e)
+            return []
+        out: list[Job] = []
+        seen: set[str] = set()
+        for item in data.get("jobs", []):
+            jid = str(item.get("id") or "")
+            if jid in seen: continue
+            seen.add(jid)
+            loc = item.get("location", "")
+            if not _looks_india(loc):  # keep India-only
+                continue
+            out.append(Job(
+                company="<Company>",
+                title=item.get("title", ""),
+                location=loc or "India",
+                url=f"https://careers.example.com/jobs/{jid}",
+                posted_at=_parse_dt(item.get("postedDate")),
+                source="careers.example.com",
+            ))
+        return out
+
+Then register it:
+
+    SCRAPERS["<Company>"] = fetch_<lowercase_company>
+
+Pagination: most ATS use `offset`/`page`/`start`. Loop until response has
+fewer items than `limit` or until you hit a hard cap (e.g. 1000) to avoid
+runaway requests. Example pagination patterns already in companies.py:
+search for `fetch_honeywell` (Oracle HCM finder) or
+`fetch_microsoft` (Eightfold offset).
+
+GOTCHA — Oracle HCM finder pagination: `offset` and `limit` MUST be
+INSIDE the finder string, NOT as separate query params. Wrong:
+`?offset=25&finder=findReqs;...`. Right:
+`?finder=findReqs;...,offset=25,limit=200`. The latter actually paginates.
+
+------------------------------------------------------------------------
+## 3. Add an SPA (Playwright) scraper
+
+Pattern lives in `backend/scrapers/spa_runner.py`. Three options, in order
+of preference:
+
+(a) Append a tuple to `SPA_TARGETS` with `extractor=None`. The runner will
+    try (in order): JSON-LD on the rendered DOM, harvested XHR JSON, and
+    finally a generic anchor-href scan. Works for most plain SPAs.
+
+        ("<Company>", "https://careers.example.com/jobs?country=India", None),
+
+(b) Add a custom extractor when the page renders anchors with bad text
+    (e.g. "Apply now" buttons instead of real titles), or when the JSON
+    response shape is uncommon. Pattern (see `_extract_goldman` for a real
+    example):
+
+        async def _extract_<company>(page) -> list[Job]:
+            try:
+                await page.wait_for_selector('a[href*="/jobs/"]', timeout=12000)
+            except Exception:
+                return []
+            items = await page.evaluate(r"""
+            () => Array.from(document.querySelectorAll('a[href*="/jobs/"]'))
+                .map(a => ({
+                    href: a.href,
+                    title: a.textContent.trim(),
+                    ctx: (a.closest('article,li,div')?.textContent || '').slice(0,400),
+                }))
+            """)
+            out, seen = [], set()
+            for it in items or []:
+                if it["href"] in seen: continue
+                seen.add(it["href"])
+                out.append(Job(
+                    company="<Company>", title=it["title"], location="India",
+                    url=it["href"], posted_at=None, source="careers.example.com",
+                ))
+            return out
+
+    Then register:
+        ("<Company>", "https://careers.example.com/jobs", _extract_<company>),
+
+(c) If the company is India-headquartered AND its anchors do NOT carry
+    India location tokens in their card markup (e.g. Tiger Analytics,
+    Wells Fargo `?country=India`), add it to the india_only_companies set
+    in `_extract_anchor_jobs` so the generic location gate doesn't drop
+    all results.
+
+SPA constants you should know:
+- `PER_COMPANY_TIMEOUT_S = 45`  (a slow company never blocks the rest)
+- `REFRESH_INTERVAL_SECONDS = 900` (full cache cycle every 15 min)
+- `_SPA_CACHE` holds results between cycles; `cached_jobs(company)` reads it.
+
+NEVER block during a refresh. If you must scroll/wait, wrap with the
+existing `page.wait_for_timeout` calls, not `asyncio.sleep`.
+
+------------------------------------------------------------------------
+## 4. Diagnosing a scraper that returns 0
+
+Order of checks (each takes 30s):
+
+1. Hit the URL with `httpx.get(url, headers={'User-Agent':'Mozilla/5.0'},
+   http2=False)` and check status.
+     * 200 with HTML  → it's SSR-able, prefer HTTP path.
+     * 200 with empty JSON `{"jobs":[]}` → wrong query params or filter.
+     * 302 to /login → bot-blocked, needs Playwright.
+     * 403 or HTML <1KB → anti-bot WAF (Akamai, Cloudflare, Datadome).
+     * `ERR_HTTP2_PROTOCOL_ERROR` → set `http2=False`.
+     * `ConnectError` / `NameError` → DNS or network blocked from this env.
+2. Tail `uvicorn` stdout while the SPA cycle runs. Look for
+   `spa[<Company>] -> N jobs in Ts`. If N=0, the extractor returned nothing.
+3. Use `/api/jobs?company=<Company>&q=a` to dump the cached titles. If
+   they all say `Apply now`, the extractor is grabbing the wrong anchor.
+4. Aggregator filters titles against role keywords. If SPA cache has
+   jobs but `/api/jobs?company=X&roles=engineer` returns 0, the titles
+   don't contain any default role keyword — usually that means the cache
+   is full of garbage anchors. Fix the extractor.
+
+------------------------------------------------------------------------
+## 5. Testing — minimum bar before commit
+
+1. Restart uvicorn fresh:
+       Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force
+       & "C:\venvs\my_search_app\Scripts\python.exe" -m uvicorn backend.main:app `
+           --host 0.0.0.0 --port 8000 --no-access-log
+
+2. Wait one full SPA cycle (~4-5 min) if you added a Playwright target.
+
+3. Query the live API for your company:
+       Invoke-RestMethod 'http://localhost:8000/api/jobs?company=<Company>' |
+           Select-Object -ExpandProperty jobs | Measure-Object
+
+   Expect a count > 0 and real (not 'Apply now') titles.
+
+4. Run the broad sweep to make sure you didn't regress others:
+       .\testapi.bat
+
+------------------------------------------------------------------------
+## 6. Common pitfalls (each cost the previous agent 20+ min)
+
+- Using `Start-Sleep` inside synchronous terminal commands: the wrapper
+  returns "Command produced no output" but the wait actually runs.
+  Prefer writing a tiny Python script that does `time.sleep()` and writes
+  a result file, then read the file via `read_file`.
+- Killing the wrong python process: `Stop-Process -Name python -Force`
+  kills uvicorn too. Restart it immediately after cleanup.
+- Forgetting that SPA registration is implicit: a company listed only in
+  `SPA_TARGETS` IS already in `SCRAPERS` after import. Do not add a
+  duplicate HTTP scraper for the same company name.
+- Trusting the generic extractor for India-only SPAs: it drops anchors
+  whose card text has no India tokens. If the whole site is India, add
+  the company to `india_only_companies` instead of patching the gate.
+- Putting Oracle HCM `offset`/`limit` outside the finder string. Always
+  inside. Always.
+
+------------------------------------------------------------------------
+## 7. Commit & push
+
+Branch is always `main`. Remote: github.com/khushal0201/my_search_app.
+
+    git add backend/scrapers/companies.py backend/scrapers/spa_runner.py
+    git commit -m "Round N: <one-line summary of fixes/additions>"
+    git push origin main
+
+For destructive ops (force push, branch deletion) — ask the user first.
+For normal commits + push to main — just do it.
+
+------------------------------------------------------------------------
+## 8. Running the server
+
+Python venv: `C:\venvs\my_search_app\Scripts\python.exe`
+Port: 8000 (frontend assumes this)
+
+    cd 'c:\Users\v-khmakhija\OneDrive - Microsoft\Documents\DS\my_search_app'
+    & "C:\venvs\my_search_app\Scripts\python.exe" -m uvicorn backend.main:app `
+        --host 0.0.0.0 --port 8000 --no-access-log
+
+Health check: `Invoke-WebRequest http://localhost:8000/api/companies`
