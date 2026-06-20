@@ -314,7 +314,7 @@ async def _extract_anchor_jobs(page, company: str, source_url: str) -> list[Job]
 
 
 SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
-    ("Apple", "https://jobs.apple.com/en-in/search?sort=newest", _extract_apple),
+    # Apple moved to HTTP scraper in companies.py (SSR HTML has __ACGH_DATA__ JSON island).
     ("Swiggy", "https://careers.swiggy.com/jobs", _extract_swiggy),
     ("Flipkart", "https://flipkart.turbohire.co/careerpage/4d757ba0-3d57-448a-b82c-238ed87ac90f", None),
     ("Cars24", "https://careers.cars24.com/", None),

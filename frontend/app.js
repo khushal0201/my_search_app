@@ -10,7 +10,7 @@ let allCompanies = [];
 // Slow / very large feeds — unchecked by default and also deferred server-side
 // so they don't block the initial refresh. Keep in sync with HEAVY_COMPANIES in
 // backend/aggregator.py.
-const HEAVY_COMPANIES = new Set(['Infosys', 'PwC', 'Accenture', 'KPMG', 'Target', 'Bosch']);
+const HEAVY_COMPANIES = new Set(['Infosys', 'PwC', 'Accenture', 'KPMG', 'Bosch']);
 
 async function loadCompanies() {
   try {

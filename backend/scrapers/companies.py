@@ -278,6 +278,83 @@ def _walk_lists(node: Any):
 
 
 # ---------------------------------------------------------------------------
+# Apple — SSR HTML carries a JSON island (<script id="__ACGH_DATA__">) with
+# the full search results, so we can avoid Playwright entirely.
+# Honors server-side India filter via location=india-INDC.
+# ---------------------------------------------------------------------------
+async def fetch_apple(client: httpx.AsyncClient, query: str) -> list[Job]:
+    base = "https://jobs.apple.com/en-in/search"
+    headers = {**DEFAULT_HEADERS, "Accept": "text/html,application/xhtml+xml"}
+    out: list[Job] = []
+    seen: set[str] = set()
+    for page in range(1, 6):  # up to ~100 results
+        params = {
+            "search": query,
+            "sort": "newest",
+            "location": "india-INDC",
+            "page": page,
+        }
+        try:
+            r = await client.get(base, params=params, headers=headers, timeout=20)
+            r.raise_for_status()
+            html = r.text
+        except Exception as e:
+            log.warning("apple page %d failed: %s", page, e)
+            break
+        # Apple SSRs the job list into window.__staticRouterHydrationData,
+        # which is a JSON string passed to JSON.parse() — so it's double-encoded.
+        m = re.search(
+            r'window\.__staticRouterHydrationData\s*=\s*JSON\.parse\("(.*?)"\);',
+            html, flags=re.S,
+        )
+        if not m:
+            break
+        try:
+            inner = json.loads('"' + m.group(1) + '"')  # unescape JS string literal
+            data = json.loads(inner)
+        except Exception as e:
+            log.warning("apple page %d parse failed: %s", page, e)
+            break
+        added = 0
+        def _walk(node):
+            if isinstance(node, dict):
+                yield node
+                for v in node.values():
+                    yield from _walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    yield from _walk(v)
+        for rec in _walk(data):
+            if not isinstance(rec, dict):
+                continue
+            pid = rec.get("positionId")
+            title = rec.get("postingTitle")
+            if not pid or not title or pid in seen:
+                continue
+            locs = rec.get("locations") or []
+            loc_text = ", ".join(
+                (l.get("name") or l.get("city") or "") if isinstance(l, dict) else str(l)
+                for l in locs
+            ).strip(", ")
+            if not _looks_india(loc_text + " " + str(rec.get("countryID", ""))):
+                continue
+            seen.add(pid)
+            added += 1
+            slug = rec.get("transformedPostingTitle") or re.sub(r"[^a-z0-9]+", "-", str(title).lower()).strip("-")
+            out.append(Job(
+                company="Apple",
+                title=title,
+                location=loc_text or "India",
+                url=f"https://jobs.apple.com/en-in/details/{pid}/{slug}",
+                posted_at=_parse_dt(rec.get("postDateInGMT") or rec.get("postingDate")),
+                source="jobs.apple.com",
+            ))
+        if added == 0:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Meta
 # ---------------------------------------------------------------------------
 async def fetch_meta(client: httpx.AsyncClient, query: str) -> list[Job]:
@@ -1535,6 +1612,7 @@ async def fetch_oracle(client: httpx.AsyncClient, query: str) -> list[Job]:
 # Public registry consumed by the aggregator.
 SCRAPERS = {
     "Amazon": fetch_amazon,
+    "Apple": fetch_apple,
     "Microsoft": fetch_microsoft,
     "Google": fetch_google,
     "Meta": fetch_meta,
