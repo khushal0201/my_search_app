@@ -1876,7 +1876,8 @@ SCRAPERS = {
     "KPMG": fetch_kpmg,
     # Round 9 — replaced Playwright targets with HTTP scrapers.
     "BCG": fetch_bcg,
-    "Qualcomm": fetch_qualcomm,
+    # Qualcomm reverted to Playwright in round 10: Eightfold SSR yields only
+    # one spotlight role per query, whereas the rendered SPA exposes ~18.
     "Synopsys": fetch_synopsys,
     "Optum": fetch_optum,
     "Moody's": fetch_moodys,

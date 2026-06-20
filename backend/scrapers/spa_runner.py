@@ -372,7 +372,9 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # Round 4 — in-house SPAs that produce anchors after JS hydration.
     ("Cisco", "https://jobs.cisco.com/jobs/SearchJobs/?listFilterMode=1&31813=%5B153%5D", None),
     # ServiceNow stays Playwright (httpx returns 403).
-    ("ServiceNow", "https://careers.servicenow.com/careers/jobs/?country=India", None),
+    # ServiceNow — country=India is the only filter that consistently
+    # narrows results without hiding too many roles after hydration.
+    ("ServiceNow", "https://careers.servicenow.com/jobs/?country=India&pagesize=50", None),
     ("GE Healthcare", "https://careers.gehealthcare.com/global/en/search-results?qcountry=India", None),
     # BCG moved to HTTP scraper (Phenom eagerLoadRefineSearch JSON island).
     ("Urban Company", "https://careers.urbancompany.com/", None),
@@ -382,12 +384,14 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # Many of these are "best effort" -- the generic anchor extractor may yield
     # 0 jobs for SuccessFactors / heavy SPAs, but the cost of trying is bounded
     # by PER_COMPANY_TIMEOUT_S so failures don't block the rest of the loop.
+    # Tiger Analytics — the corporate page hides job titles outside any
+    # heading/card we can reliably target, so we keep the sensehq mirror.
     ("Tiger Analytics", "https://tiger-analytics.sensehq.com/careers", None),
     ("Juspay", "https://juspay.io/careers", None),
     ("Nykaa", "https://careers.nykaa.com/", None),
     # Optum moved to HTTP scraper (TalentBrew SSR anchors).
     ("FedEx", "https://careers.fedex.com/fedex/jobs?location=India", None),
-    ("Bain", "https://www.bain.com/careers/find-a-role/?country=india", None),
+    ("Bain", "https://www.bain.com/careers/find-a-role/?filters=offices%28274%2C276%2C275%29%7C", None),
     ("Bank of America", "https://careers.bankofamerica.com/en-us/job-search?ref=country&country=India", None),
     ("Deloitte", "https://southasiacareers.deloitte.com/go/Deloitte-India/718244/", None),
     # Moody's moved to HTTP scraper (TalentBrew SSR anchors).
@@ -410,7 +414,9 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("Dream11", "https://careers.dream11.com/", None),
     ("Honeywell", "https://careers.honeywell.com/global/en/search-results?qcountry=India", None),
     # Synopsys moved to HTTP scraper (TalentBrew SSR anchors).
-    # Qualcomm moved to HTTP scraper (Eightfold JobPosting JSON-LD).
+    # Qualcomm — Eightfold SSR returns only one spotlight role; the rendered
+    # SPA at this URL exposes per-role anchors with /careers/job/<id>.
+    ("Qualcomm", "https://careers.qualcomm.com/careers?location=India&pid=446716678737&sort_by=timestamp", None),
     ("Wells Fargo", "https://www.wellsfargojobs.com/en/search-jobs/India", None),
     ("Fidelity", "https://jobs.fidelity.com/en/search-jobs/India", None),
     # Goldman Sachs — higher.gs.com is now a client-rendered Apollo SPA, so
