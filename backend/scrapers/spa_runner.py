@@ -239,6 +239,57 @@ async def _extract_apple(page) -> list[Job]:
     return out
 
 
+async def _extract_goldman(page) -> list[Job]:
+    """higher.gs.com (Goldman Sachs careers) renders results client-side via
+    Apollo. After hydration, role cards become anchors of the form
+    ``/roles/<numeric-id>``. Pull title from the anchor text and the location
+    from the nearest visible cell (the card text usually contains the city)."""
+    try:
+        await page.wait_for_selector('a[href*="/roles/"]', timeout=12000)
+    except Exception:
+        return []
+    items = await page.evaluate(r"""
+() => {
+  const out = [];
+  const seen = new Set();
+  document.querySelectorAll('a[href*="/roles/"]').forEach(a => {
+    const href = a.href;
+    if (!href || seen.has(href)) return;
+    if (!/\/roles\/\d+/.test(href)) return;
+    const title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!title || title.length < 4) return;
+    seen.add(href);
+    const card = a.closest('tr, li, article, [role="row"], div') || a.parentElement;
+    const ctx = card ? (card.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 400) : '';
+    out.push({title, href, ctx});
+  });
+  return out.slice(0, 200);
+}
+""")
+    out: list[Job] = []
+    seen: set[str] = set()
+    for it in items or []:
+        href = it.get("href") or ""
+        title = it.get("title") or ""
+        ctx = it.get("ctx") or ""
+        if not _looks_india(ctx) and not _looks_india(title):
+            continue
+        loc = "India"
+        ctx_l = ctx.lower()
+        for tok in _INDIA_TOKENS:
+            if tok in ctx_l and tok != "india":
+                loc = tok.title()
+                break
+        if href in seen:
+            continue
+        seen.add(href)
+        out.append(Job(
+            company="Goldman Sachs", title=title, location=loc,
+            url=href, posted_at=None, source="higher.gs.com",
+        ))
+    return out
+
+
 # Generic anchor-based fallback. Pulls anchors whose href looks like a job
 # detail page (contains /jobs/<id>, /details/<id>, /position/<id>, etc.) and
 # uses the anchor text as title. Location is read from nearby DOM if present;
@@ -320,9 +371,10 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("Cars24", "https://careers.cars24.com/", None),
     # Round 4 — in-house SPAs that produce anchors after JS hydration.
     ("Cisco", "https://jobs.cisco.com/jobs/SearchJobs/?listFilterMode=1&31813=%5B153%5D", None),
+    # ServiceNow stays Playwright (httpx returns 403).
     ("ServiceNow", "https://careers.servicenow.com/careers/jobs/?country=India", None),
     ("GE Healthcare", "https://careers.gehealthcare.com/global/en/search-results?qcountry=India", None),
-    ("BCG", "https://careers.bcg.com/global/en/search-results?qcountry=India", None),
+    # BCG moved to HTTP scraper (Phenom eagerLoadRefineSearch JSON island).
     ("Urban Company", "https://careers.urbancompany.com/", None),
     # Round 5 — Tier 3 SPA that yielded real jobs through the generic fallbacks.
     ("Infosys", "https://career.infosys.com/joblist?country=India", None),
@@ -333,18 +385,16 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("Tiger Analytics", "https://tiger-analytics.sensehq.com/careers", None),
     ("Juspay", "https://juspay.io/careers", None),
     ("Nykaa", "https://careers.nykaa.com/", None),
-    ("Optum", "https://careers.unitedhealthgroup.com/search-jobs?ac=1230&country=India", None),
+    # Optum moved to HTTP scraper (TalentBrew SSR anchors).
     ("FedEx", "https://careers.fedex.com/fedex/jobs?location=India", None),
     ("Bain", "https://www.bain.com/careers/find-a-role/?country=india", None),
     ("Bank of America", "https://careers.bankofamerica.com/en-us/job-search?ref=country&country=India", None),
     ("Deloitte", "https://southasiacareers.deloitte.com/go/Deloitte-India/718244/", None),
-    ("Moody's", "https://careers.moodys.com/en/search-jobs?country=India", None),
+    # Moody's moved to HTTP scraper (TalentBrew SSR anchors).
     # Round 7 — replaced broken HTTP scrapers (their JSON APIs moved/blocked).
-    # Microsoft careers migrated from gcsservices.careers.microsoft.com (cert
-    # mismatch / 404) to Eightfold-hosted SPA at jobs.careers.microsoft.com.
+    # Microsoft moved to HTTP Eightfold scraper (apply.careers.microsoft.com).
     # Meta blocks raw httpx (returns 1.5KB anti-bot shell) and rotates GraphQL
     # doc_ids; Playwright with a real Chromium UA gets the rendered page.
-    ("Microsoft", "https://jobs.careers.microsoft.com/global/en/search?lc=India&pg=1&pgSz=20", None),
     ("Meta", "https://www.metacareers.com/jobs?offices[0]=India", None),
     # Round 8 — SPA fallbacks for companies whose HTTP probes returned no clean
     # JSON ATS (Darwinbox SPAs, custom in-house boards, Phenom anti-bot, etc.).
@@ -359,10 +409,14 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("Delhivery", "https://www.delhivery.com/careers", None),
     ("Dream11", "https://careers.dream11.com/", None),
     ("Honeywell", "https://careers.honeywell.com/global/en/search-results?qcountry=India", None),
-    ("Synopsys", "https://careers.synopsys.com/jobs/search?location=India", None),
-    ("Qualcomm", "https://careers.qualcomm.com/careers?location=India&pid=", None),
+    # Synopsys moved to HTTP scraper (TalentBrew SSR anchors).
+    # Qualcomm moved to HTTP scraper (Eightfold JobPosting JSON-LD).
     ("Wells Fargo", "https://www.wellsfargojobs.com/en/search-jobs/India", None),
     ("Fidelity", "https://jobs.fidelity.com/en/search-jobs/India", None),
+    # Goldman Sachs — higher.gs.com is now a client-rendered Apollo SPA, so
+    # the previous __NEXT_DATA__ scraper returns an empty skeleton. Use the
+    # custom hydration-aware extractor to walk the rendered role anchors.
+    ("Goldman Sachs", "https://higher.gs.com/results?sort=RELEVANCE&LOCATION_TAG=India", _extract_goldman),
     # Removed in Round 6 verification sweep:
     #   PaisaBazaar — no ATS at all (email-only: careers+tech@paisabazaar.com).
     #   Cleartrip — shares the Flipkart TurboHire instance, already covered by

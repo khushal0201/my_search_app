@@ -134,45 +134,18 @@ async def fetch_amazon(client: httpx.AsyncClient, query: str) -> list[Job]:
 
 
 # ---------------------------------------------------------------------------
-# Microsoft
+# Microsoft — now hosted on Eightfold at apply.careers.microsoft.com. Each
+# search-result page SSRs every visible role as a JobPosting JSON-LD block.
+# Legacy gcsservices.careers.microsoft.com endpoint is dead (301 -> 404).
 # ---------------------------------------------------------------------------
 async def fetch_microsoft(client: httpx.AsyncClient, query: str) -> list[Job]:
-    url = "https://gcsservices.careers.microsoft.com/search/api/v1/search"
-    params = {
-        "q": query,
-        "lc": "India",
-        "l": "en_us",
-        "pg": 1,
-        "pgSz": 50,
-        "o": "Recent",
-        "flt": "true",
-    }
-    try:
-        r = await client.get(url, params=params, headers=DEFAULT_HEADERS, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        log.warning("microsoft failed: %s", e)
-        return []
-    result = (data.get("operationResult") or {}).get("result") or {}
-    out: list[Job] = []
-    for j in result.get("jobs", []):
-        props = j.get("properties") or {}
-        locs = props.get("locations") or []
-        loc = ", ".join(locs) if isinstance(locs, list) else str(locs)
-        if not _looks_india(loc + " " + (props.get("primaryLocation") or "")):
-            continue
-        title = j.get("title", "")
-        job_id = j.get("jobId", "")
-        out.append(Job(
-            company="Microsoft",
-            title=title,
-            location=loc or (props.get("primaryLocation") or ""),
-            url=f"https://jobs.careers.microsoft.com/global/en/job/{job_id}",
-            posted_at=_parse_dt(j.get("postingDate")),
-            source="careers.microsoft.com",
-        ))
-    return out
+    # Microsoft uses the same Eightfold tenant pattern as Qualcomm; reuse helper.
+    return await _fetch_eightfold_html(
+        client, "Microsoft",
+        "https://apply.careers.microsoft.com/careers",
+        pid="1970393556872427", query=query, domain="microsoft.com",
+        source="apply.careers.microsoft.com",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -660,71 +633,11 @@ async def _hydrate_citi_dates(client: httpx.AsyncClient, jobs: list[Job]) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Goldman Sachs (scrape __NEXT_DATA__ from higher.gs.com)
+# Goldman Sachs — higher.gs.com migrated to a client-rendered Apollo SPA.
+# The __NEXT_DATA__ blob is now an empty skeleton, so this scraper has been
+# moved to spa_runner.py (Playwright). Keep this comment so the registry
+# lookup below clearly maps to the SPA wrapper.
 # ---------------------------------------------------------------------------
-async def fetch_goldman(client: httpx.AsyncClient, query: str) -> list[Job]:
-    url = "https://higher.gs.com/results"
-    params = {"LOCATION_TAG": "India", "q": query, "page": 1, "sort": "RELEVANCE"}
-    try:
-        r = await client.get(url, params=params, headers=DEFAULT_HEADERS, timeout=20)
-        r.raise_for_status()
-        html = r.text
-    except Exception as e:
-        log.warning("goldman failed: %s", e)
-        return []
-    import json as _json
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, flags=re.S)
-    if not m:
-        return []
-    try:
-        blob = _json.loads(m.group(1))
-    except Exception:
-        return []
-    # Walk the Next.js page-props tree for a list that looks like jobs.
-    def _walk(node):
-        if isinstance(node, dict):
-            for v in node.values():
-                yield from _walk(v)
-        elif isinstance(node, list):
-            yield node
-            for v in node:
-                yield from _walk(v)
-    out: list[Job] = []
-    for lst in _walk(blob):
-        if not lst or not isinstance(lst[0], dict):
-            continue
-        sample = lst[0]
-        if not any(k in sample for k in ("jobTitle", "title", "requisitionId")):
-            continue
-        for j in lst:
-            if not isinstance(j, dict):
-                continue
-            title = j.get("jobTitle") or j.get("title", "")
-            if not title:
-                continue
-            loc_obj = j.get("locations") or j.get("location") or []
-            if isinstance(loc_obj, list):
-                loc = ", ".join(
-                    (x.get("name") or x.get("city") or "") if isinstance(x, dict) else str(x) for x in loc_obj
-                )
-            elif isinstance(loc_obj, dict):
-                loc = loc_obj.get("name") or loc_obj.get("city") or ""
-            else:
-                loc = str(loc_obj)
-            if not _looks_india(loc):
-                continue
-            jid = j.get("requisitionId") or j.get("id") or ""
-            out.append(Job(
-                company="Goldman Sachs",
-                title=title,
-                location=loc,
-                url=f"https://higher.gs.com/roles/{jid}" if jid else "https://higher.gs.com",
-                posted_at=_parse_dt(j.get("postedDate") or j.get("datePosted")),
-                source="higher.gs.com",
-            ))
-        if out:
-            break  # first matching list wins
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1609,6 +1522,288 @@ async def fetch_oracle(client: httpx.AsyncClient, query: str) -> list[Job]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Round 9 — replace Playwright SPA targets with HTTP scrapers where the
+# careers site SSRs jobs into the HTML (TalentBrew, Eightfold JSON-LD, Phenom).
+# ---------------------------------------------------------------------------
+
+def _parse_jobposting_jsonld(html: str, company: str, source: str) -> list[Job]:
+    """Extract every <script type='application/ld+json'>…JobPosting…</script> block."""
+    out: list[Job] = []
+    seen: set[str] = set()
+    for m in re.finditer(
+        r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
+        html, flags=re.S,
+    ):
+        try:
+            data = json.loads(m.group(1))
+        except Exception:
+            continue
+        candidates = data if isinstance(data, list) else [data]
+        for item in candidates:
+            if not isinstance(item, dict) or item.get("@type") != "JobPosting":
+                continue
+            title = item.get("title") or ""
+            if not title:
+                continue
+            loc_obj = item.get("jobLocation") or {}
+            loc_list = loc_obj if isinstance(loc_obj, list) else [loc_obj]
+            loc_text = ""
+            country_in_india = False
+            for lo in loc_list:
+                if not isinstance(lo, dict):
+                    continue
+                addr = lo.get("address") or {}
+                if isinstance(addr, dict):
+                    country = addr.get("addressCountry")
+                    if isinstance(country, dict):
+                        country = country.get("name") or ""
+                    if str(country).upper() in ("IN", "INDIA"):
+                        country_in_india = True
+                    bits = [addr.get("addressLocality"), addr.get("addressRegion"), country]
+                    text = ", ".join(b for b in bits if b)
+                    if text and not loc_text:
+                        loc_text = text
+            if not (country_in_india or _looks_india(loc_text)):
+                continue
+            url = item.get("url") or ""
+            if url in seen:
+                continue
+            seen.add(url)
+            out.append(Job(
+                company=company,
+                title=title,
+                location=loc_text or "India",
+                url=url,
+                posted_at=_parse_dt(item.get("datePosted")),
+                source=source,
+            ))
+    return out
+
+
+async def _fetch_eightfold_html(
+    client: httpx.AsyncClient, company: str, base: str, pid: str, query: str,
+    domain: str, source: str, max_pages: int = 1,
+) -> list[Job]:
+    """Eightfold-hosted SPAs only SSR the *spotlight* role as JobPosting JSON-LD
+    — the full result list is hydrated client-side. Fetching page 0 reliably
+    yields one canonical role per query; pagination returns the same spotlight
+    on every page, so we don't iterate."""
+    out: list[Job] = []
+    seen_titles: set[str] = set()
+    for page in range(max_pages):
+        params = {
+            "query": query, "start": page * 10, "location": "India",
+            "pid": pid, "sort_by": "timestamp", "filter_include_remote": "1",
+        }
+        try:
+            r = await client.get(base, params=params, headers=DEFAULT_HEADERS, timeout=25)
+            r.raise_for_status()
+        except Exception as e:
+            log.warning("%s eightfold page %d failed: %s", company, page, e)
+            break
+        before = len(out)
+        for j in _parse_jobposting_jsonld(r.text, company, source):
+            if j.title in seen_titles:
+                continue
+            seen_titles.add(j.title)
+            out.append(j)
+        if len(out) == before:
+            break
+    return out
+
+
+async def fetch_qualcomm(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_eightfold_html(
+        client, "Qualcomm",
+        "https://careers.qualcomm.com/careers",
+        pid="446716678737", query=query, domain="qualcomm.com",
+        source="careers.qualcomm.com",
+    )
+
+
+async def _fetch_talentbrew_html(
+    client: httpx.AsyncClient, company: str, base: str, org_id: str,
+    query: str, source: str, job_path_prefix: str = "/job/", max_pages: int = 5,
+) -> list[Job]:
+    """TalentBrew search pages SSR job anchors:
+        <a class="...job-link" href="{job_path_prefix}{city}/{slug}/{org_id}/{job_id}"
+           data-job-id="{job_id}">{title}</a>
+        ...<span class="job-location"> {location} </span>...
+    """
+    out: list[Job] = []
+    seen: set[str] = set()
+    headers = {**DEFAULT_HEADERS, "Accept-Language": "en-US,en;q=0.9"}
+    for page in range(1, max_pages + 1):
+        params = {"k": query, "Keywords": query, "Location": "India", "p": page}
+        url = base.rstrip("/") + ("/" if not base.endswith("/") else "")
+        # TalentBrew search results live at /search-jobs (with optional /{kw}/{loc}/...)
+        try:
+            r = await client.get(
+                base, params=params, headers=headers, timeout=25, follow_redirects=True,
+            )
+            r.raise_for_status()
+        except Exception as e:
+            log.warning("%s talentbrew page %d failed: %s", company, page, e)
+            break
+        html = r.text
+        # Anchor pattern is class-agnostic across TalentBrew tenants: the link
+        # always has both ``href="/job/..."`` (or ``/en/job/...``) and a
+        # ``data-job-id="<digits>"``. Synopsys/Moody's wrap their title in
+        # <h2>; Optum's same template uses <h2> too — just with a different
+        # outer class (``brand-facet brand-facet__optum``).
+        anchor_re = re.compile(
+            r'<a[^>]+href="(?P<href>/(?:en/)?job/[^"]+/\d+)"[^>]+data-job-id="(?P<jid>\d+)"[^>]*>'
+            r'(?P<inner>.*?)</a>',
+            flags=re.S,
+        )
+        matches = list(anchor_re.finditer(html))
+        if not matches:
+            break
+        added = 0
+        for m in matches:
+            jid = m.group("jid")
+            if jid in seen:
+                continue
+            href = m.group("href")
+            # Title is either inside <h2>…</h2> inside the anchor, or the anchor's text.
+            inner = m.group("inner")
+            title_m = re.search(r"<h\d[^>]*>(.*?)</h\d>", inner, flags=re.S)
+            title_raw = title_m.group(1) if title_m else inner
+            title = re.sub(r"<[^>]+>", "", title_raw).strip()
+            title = re.sub(r"\s+", " ", title)
+            if not title:
+                continue
+            # Location: the .job-location span sits INSIDE the anchor on Optum
+            # (next to the <h2>) and AFTER the anchor on Synopsys/Moody's.
+            loc = ""
+            loc_inside = re.search(
+                r'class="[^"]*job-location[^"]*"[^>]*>\s*([^<]+)<', inner,
+            )
+            if loc_inside:
+                loc = loc_inside.group(1).strip()
+            else:
+                tail = html[m.end():m.end() + 1500]
+                loc_m = re.search(
+                    r'class="[^"]*(?:job-location|search-results-list__job-info\s+job-location)[^"]*"[^>]*>\s*([^<]+)<',
+                    tail,
+                )
+                loc = loc_m.group(1).strip() if loc_m else ""
+            loc = re.sub(r"\s+", " ", loc)
+            # Honor server-side ?Location=India filter, but skip junk locs from
+            # the "featured jobs" sidebar (Heredia etc. in MDY).
+            if loc and not _looks_india(loc):
+                continue
+            seen.add(jid)
+            added += 1
+            full_url = href if href.startswith("http") else (
+                base.split("/search-jobs")[0].rstrip("/") + href
+            )
+            out.append(Job(
+                company=company, title=title,
+                location=loc or "India",
+                url=full_url, posted_at=None, source=source,
+            ))
+        if added == 0:
+            break
+    return out
+
+
+async def fetch_synopsys(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_talentbrew_html(
+        client, "Synopsys",
+        base="https://careers.synopsys.com/search-jobs",
+        org_id="44408", query=query,
+        source="careers.synopsys.com",
+    )
+
+
+async def fetch_optum(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_talentbrew_html(
+        client, "Optum",
+        base="https://careers.unitedhealthgroup.com/search-jobs",
+        org_id="34088", query=query,
+        source="careers.unitedhealthgroup.com",
+    )
+
+
+async def fetch_moodys(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_talentbrew_html(
+        client, "Moody's",
+        base="https://careers.moodys.com/en/search-jobs",
+        org_id="49841", query=query, job_path_prefix="/en/job/",
+        source="careers.moodys.com",
+    )
+
+
+async def fetch_bcg(client: httpx.AsyncClient, query: str) -> list[Job]:
+    """BCG (Phenom CMS) inlines results in eagerLoadRefineSearch.data.jobs[]."""
+    url = "https://careers.bcg.com/global/en/search-results"
+    params = {"keywords": query}
+    headers = {**DEFAULT_HEADERS, "Accept-Language": "en-US,en;q=0.9"}
+    try:
+        r = await client.get(url, params=params, headers=headers, timeout=25)
+        r.raise_for_status()
+        html = r.text
+    except Exception as e:
+        log.warning("bcg failed: %s", e)
+        return []
+    # The eagerLoadRefineSearch object contains the first page of jobs as a
+    # raw JSON island. Find its opening brace and walk the balanced braces.
+    key = '"eagerLoadRefineSearch"'
+    key_at = html.find(key)
+    if key_at == -1:
+        return []
+    obj_start = html.find('{', key_at)
+    if obj_start == -1:
+        return []
+    depth = 0
+    obj_end = -1
+    i = obj_start
+    while i < len(html):
+        c = html[i]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                obj_end = i + 1
+                break
+        i += 1
+    if obj_end == -1:
+        return []
+    try:
+        block = json.loads(html[obj_start:obj_end])
+    except Exception:
+        return []
+    jobs = ((block.get("data") or {}).get("jobs")) or []
+    out: list[Job] = []
+    for j in jobs:
+        if not isinstance(j, dict):
+            continue
+        country = j.get("country") or ""
+        city = j.get("city") or j.get("location") or ""
+        loc = ", ".join(x for x in (city, country) if x).strip(", ")
+        if not _looks_india(loc + " " + country):
+            continue
+        jid = j.get("jobId") or j.get("jobSeqNo") or ""
+        title = j.get("title") or j.get("jobTitle") or ""
+        if not title:
+            continue
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        href = f"https://careers.bcg.com/global/en/job/{jid}/{slug}" if jid else "https://careers.bcg.com/global/en/search-results"
+        out.append(Job(
+            company="BCG",
+            title=title,
+            location=loc or "India",
+            url=href,
+            posted_at=_parse_dt(j.get("postedDate") or j.get("postingStartDate")),
+            source="careers.bcg.com",
+        ))
+    return out
+
+
+
 # Public registry consumed by the aggregator.
 SCRAPERS = {
     "Amazon": fetch_amazon,
@@ -1620,7 +1815,7 @@ SCRAPERS = {
     "Visa": fetch_visa,
     "Citi": fetch_citi,
     "JPMorgan Chase": fetch_jpmorgan,
-    "Goldman Sachs": fetch_goldman,
+    # Goldman Sachs moved to Playwright SPA (higher.gs.com is now Apollo-only).
     "Morgan Stanley": fetch_morgan_stanley,
     "American Express": fetch_amex,
     # Round 1 additions
@@ -1679,6 +1874,12 @@ SCRAPERS = {
     # Round 7 — final wishlist gaps
     "Docker": fetch_docker,
     "KPMG": fetch_kpmg,
+    # Round 9 — replaced Playwright targets with HTTP scrapers.
+    "BCG": fetch_bcg,
+    "Qualcomm": fetch_qualcomm,
+    "Synopsys": fetch_synopsys,
+    "Optum": fetch_optum,
+    "Moody's": fetch_moodys,
     # Round 8 — Tier 1/Tier 2 product, semis, finance, GCC sweep
     # Workday
     "Zoom": fetch_zoom,
