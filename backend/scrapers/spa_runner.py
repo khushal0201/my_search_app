@@ -338,6 +338,12 @@ async def _extract_anchor_jobs(page, company: str, source_url: str) -> list[Job]
     # India. We also accept anchors whose href encodes an India locale
     # (e.g. jobs.apple.com/en-in/details/...).
     india_url_markers = ("/en-in/", "/en_in/", "/in/", "/india/", "-india/", "/india-")
+    # India-headquartered companies *and* SPA targets whose URLs are already
+    # server-side India-filtered but whose card markup doesn't repeat any
+    # India token. For these we bypass the India-token gate and treat every
+    # job-shaped anchor as India.
+    india_only_companies = {"Wells Fargo"}
+    company_is_india_only = company in india_only_companies
     for it in items:
         href = it.get("href") or ""
         title = it.get("title") or ""
@@ -345,7 +351,7 @@ async def _extract_anchor_jobs(page, company: str, source_url: str) -> list[Job]
         href_l = href.lower()
         is_india_url = any(m in href_l for m in india_url_markers)
         text_for_loc = (title + " " + ctx).lower()
-        if not (is_india_url or _looks_india(text_for_loc)):
+        if not (company_is_india_only or is_india_url or _looks_india(text_for_loc)):
             continue
         # Try to pull a city out of the context
         loc = "India"
@@ -384,9 +390,10 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # Many of these are "best effort" -- the generic anchor extractor may yield
     # 0 jobs for SuccessFactors / heavy SPAs, but the cost of trying is bounded
     # by PER_COMPANY_TIMEOUT_S so failures don't block the rest of the loop.
-    # Tiger Analytics — the corporate page hides job titles outside any
-    # heading/card we can reliably target, so we keep the sensehq mirror.
-    ("Tiger Analytics", "https://tiger-analytics.sensehq.com/careers", None),
+    # Tiger Analytics removed in Round 11 — the corporate careers page only
+    # exposes 'Apply Now' buttons (no headings near them) and the sensehq
+    # mirror returns 0 anchors after JS hydration. No path produced real job
+    # titles from this environment.
     ("Juspay", "https://juspay.io/careers", None),
     ("Nykaa", "https://careers.nykaa.com/", None),
     # Optum moved to HTTP scraper (TalentBrew SSR anchors).
@@ -412,12 +419,15 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("Ola Electric", "https://www.olaelectric.com/careers", None),
     ("Delhivery", "https://www.delhivery.com/careers", None),
     ("Dream11", "https://careers.dream11.com/", None),
-    ("Honeywell", "https://careers.honeywell.com/global/en/search-results?qcountry=India", None),
+    # Honeywell moved to HTTP scraper (Oracle HCM REST API at
+    # ibqbjb.fa.ocs.oraclecloud.com, ~355 India roles).
     # Synopsys moved to HTTP scraper (TalentBrew SSR anchors).
     # Qualcomm — Eightfold SSR returns only one spotlight role; the rendered
     # SPA at this URL exposes per-role anchors with /careers/job/<id>.
     ("Qualcomm", "https://careers.qualcomm.com/careers?location=India&pid=446716678737&sort_by=timestamp", None),
-    ("Wells Fargo", "https://www.wellsfargojobs.com/en/search-jobs/India", None),
+    # Wells Fargo — the old /en/search-jobs/India path now 404s. The
+    # ?country=India filter on /en/jobs/ returns ~10 India roles per page.
+    ("Wells Fargo", "https://www.wellsfargojobs.com/en/jobs/?country=India", None),
     ("Fidelity", "https://jobs.fidelity.com/en/search-jobs/India", None),
     # Goldman Sachs — higher.gs.com is now a client-rendered Apollo SPA, so
     # the previous __NEXT_DATA__ scraper returns an empty skeleton. Use the

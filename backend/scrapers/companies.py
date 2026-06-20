@@ -1803,7 +1803,64 @@ async def fetch_bcg(client: httpx.AsyncClient, query: str) -> list[Job]:
     return out
 
 
+# Honeywell — Oracle HCM Cloud at ibqbjb.fa.ocs.oraclecloud.com. The careers.honeywell.com
+# Phenom skin proxies to the same backend, but hitting the Oracle host directly
+# is more reliable (the Phenom shell tends to ERR_HTTP2_PROTOCOL_ERROR in Chromium).
+# India GeographyId = 300000000469485 (~355 roles as of 2025). Note: pagination
+# params (offset/limit) must live *inside* the finder string — the standard
+# REST query-string ?offset=&limit= is ignored by this endpoint.
+async def fetch_honeywell(client: httpx.AsyncClient, query: str) -> list[Job]:
+    base = "https://ibqbjb.fa.ocs.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+    out: list[Job] = []
+    seen: set[str] = set()
+    page_size = 200
+    for page in range(6):
+        offset = page * page_size
+        finder = (
+            f"findReqs;siteNumber=CX_1,locationId=300000000469485,"
+            f"keyword={query},sortBy=POSTING_DATES_DESC,"
+            f"offset={offset},limit={page_size}"
+        )
+        params = {
+            "onlyData": "true",
+            "expand": "requisitionList.secondaryLocations",
+            "finder": finder,
+        }
+        try:
+            r = await client.get(base, params=params, headers=DEFAULT_HEADERS, timeout=25)
+            r.raise_for_status()
+            data = r.json()
+            items = data.get("items") or []
+            reqs = items[0].get("requisitionList", []) if items and isinstance(items[0], dict) else []
+            if not reqs:
+                break
+            added = 0
+            for j in reqs:
+                jid = j.get("Id") or ""
+                if not jid or jid in seen:
+                    continue
+                seen.add(jid)
+                added += 1
+                loc = j.get("PrimaryLocation") or "India"
+                if not _looks_india(loc) and j.get("PrimaryLocationCountry") != "IN":
+                    continue
+                out.append(Job(
+                    company="Honeywell",
+                    title=j.get("Title", ""),
+                    location=loc,
+                    url=f"https://careers.honeywell.com/en/sites/Honeywell/job/{jid}",
+                    posted_at=_parse_dt(j.get("PostedDate")),
+                    source="careers.honeywell.com (Oracle HCM)",
+                ))
+            if added == 0 or len(reqs) < page_size:
+                break
+        except Exception as e:
+            log.warning("honeywell page %d failed: %s", page, e)
+            break
+    return out
 
+
+# ---------------------------------------------------------------------------
 # Public registry consumed by the aggregator.
 SCRAPERS = {
     "Amazon": fetch_amazon,
@@ -1876,6 +1933,8 @@ SCRAPERS = {
     "KPMG": fetch_kpmg,
     # Round 9 — replaced Playwright targets with HTTP scrapers.
     "BCG": fetch_bcg,
+    # Round 11 — Honeywell moved off broken Phenom SPA to direct Oracle HCM API.
+    "Honeywell": fetch_honeywell,
     # Qualcomm reverted to Playwright in round 10: Eightfold SSR yields only
     # one spotlight role per query, whereas the rendered SPA exposes ~18.
     "Synopsys": fetch_synopsys,
