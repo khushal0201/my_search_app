@@ -221,7 +221,15 @@ async function loadJobs(refresh = false) {
           render();
         } else if (msg.type === 'done') {
           loadProgress = null;
+          loadedPostedDays = postedDays;
           render();
+          // If the user widened the "Posted within" window while this load
+          // was in flight, the data we just received doesn't cover it.
+          // Kick a follow-up fetch so the archive rows show up.
+          const liveDays = parseInt($('posted').value, 10) || 0;
+          if (_effectivePostedDays(liveDays) > _effectivePostedDays(loadedPostedDays)) {
+            loadJobs(false);
+          }
         } else if (msg.type === 'error') {
           console.warn('stream error', msg.error);
         }
@@ -238,6 +246,17 @@ async function loadJobs(refresh = false) {
 
 let allJobs = [];
 let loadProgress = null; // {done, pending} while a stream is in flight
+// posted_days value the server was asked for in the *last completed* load.
+// Used to decide whether a "Posted within" change needs another API hit.
+// null  = nothing loaded yet
+// 0     = "Any time" was requested (server returned everything)
+// N>0   = last load fetched up to N days
+let loadedPostedDays = null;
+
+// Treat 0 ("Any time") as the widest window so comparisons are uniform.
+function _effectivePostedDays(d) {
+  return (!d || d <= 0) ? Infinity : d;
+}
 
 function filterByPosted(jobs) {
   const days = parseInt($('posted').value, 10) || 0;
@@ -295,10 +314,24 @@ function render() {
 
 $('search').addEventListener('click', () => loadJobs(false));
 $('refresh').addEventListener('click', () => loadJobs(true));
-// "Posted within" affects what the server returns (hot tier vs hot+archive
-// union), so changing it must hit the API. The server has its own per-query
-// cache so repeated toggles are cheap.
-$('posted').addEventListener('change', () => loadJobs(false));
+// Posted-within change strategy:
+//   - load in flight                              -> re-render only; the
+//                                                    in-flight stream will
+//                                                    auto-refetch on `done`
+//                                                    if we widened the window
+//   - new window <= last-loaded window            -> re-render (subset of
+//                                                    data we already have)
+//   - new window  > last-loaded window            -> fetch (need archive rows)
+$('posted').addEventListener('change', () => {
+  const newDays = parseInt($('posted').value, 10) || 0;
+  if (loadProgress) { render(); return; }
+  if (loadedPostedDays !== null &&
+      _effectivePostedDays(newDays) <= _effectivePostedDays(loadedPostedDays)) {
+    render();
+    return;
+  }
+  loadJobs(false);
+});
 for (const id of ['roles', 'skills']) {
   $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') loadJobs(); });
 }
