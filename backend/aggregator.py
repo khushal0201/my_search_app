@@ -19,6 +19,12 @@ DEFAULT_ROLES: list[str] = [
     "data analyst",
     "machine learning engineer",
     "forward deployed engineer",
+    "quant developer",
+    "quantitative developer",
+    "quant engineer",
+    "quantitative engineer",
+    "quant researcher",
+    "quantitative researcher",
 ]
 DEFAULT_SKILLS: list[str] = [
     "spark",
@@ -63,6 +69,24 @@ DEFAULT_SKILLS: list[str] = [
     "vertex ai",
     "vector database",
     "pinecone",
+    # Quant / HFT toolkit
+    "c++",
+    "kdb",
+    "kdb+",
+    "q/kdb",
+    "rust",
+    "low latency",
+    "low-latency",
+    "fpga",
+    "fix protocol",
+    "market making",
+    "market-making",
+    "options pricing",
+    "derivatives",
+    "high frequency trading",
+    "hft",
+    "alpha research",
+    "execution algos",
 ]
 
 _CACHE: dict[str, tuple[float, list[Job]]] = {}

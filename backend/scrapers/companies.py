@@ -1917,6 +1917,86 @@ async def fetch_honeywell(client: httpx.AsyncClient, query: str) -> list[Job]:
     return out
 
 
+# Booking.com — custom in-house JSON ATS at jobs.booking.com/api/jobs. The
+# public site's filter buttons map to ?country=India which limits to India
+# roles and exposes totalCount in the response. Pagination uses ?page=N with
+# a fixed page size of 10 (limit/offset are rejected with 422). The detail
+# page is jobs.booking.com/booking/jobs/{slug}.
+async def fetch_booking(client: httpx.AsyncClient, query: str) -> list[Job]:
+    base = "https://jobs.booking.com/api/jobs"
+    out: list[Job] = []
+    seen: set[str] = set()
+    headers = {**DEFAULT_HEADERS, "Accept": "application/json"}
+    for page in range(1, 11):  # up to 10 pages * 10 = 100 jobs; well above totalCount
+        try:
+            r = await client.get(base, params={"country": "India", "page": page},
+                                  headers=headers, timeout=25)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            log.warning("booking page %d failed: %s", page, e)
+            break
+        jobs = data.get("jobs") or []
+        if not jobs:
+            break
+        new_this_page = 0
+        for entry in jobs:
+            j = entry.get("data") or entry
+            slug = j.get("slug") or j.get("req_id") or ""
+            if not slug or slug in seen:
+                continue
+            seen.add(slug)
+            new_this_page += 1
+            country = (j.get("country") or "").strip()
+            if country and country.lower() != "india":
+                continue
+            loc_bits = [b for b in (j.get("city"), j.get("state"), j.get("country")) if b]
+            loc = ", ".join(loc_bits) or "India"
+            out.append(Job(
+                company="Booking.com",
+                title=j.get("title", ""),
+                location=loc,
+                url=f"https://jobs.booking.com/booking/jobs/{slug}",
+                posted_at=_parse_dt(j.get("createdAt") or j.get("publishedAt")
+                                     or j.get("published_at")),
+                source="jobs.booking.com",
+            ))
+        total = data.get("totalCount") or data.get("count")
+        if total and len(seen) >= int(total):
+            break
+        if new_this_page == 0:
+            break
+    return out
+
+
+# Tower Research Capital — public Greenhouse board with id
+# `towerresearchcapital` (~69 roles globally, ~14 India in Gurgaon/Gurugram).
+async def fetch_tower_research(client: httpx.AsyncClient, query: str) -> list[Job]:
+    url = "https://api.greenhouse.io/v1/boards/towerresearchcapital/jobs"
+    try:
+        r = await client.get(url, headers=DEFAULT_HEADERS, timeout=25)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        log.warning("tower research failed: %s", e)
+        return []
+    out: list[Job] = []
+    for j in data.get("jobs") or []:
+        loc = ((j.get("location") or {}).get("name") or "").strip()
+        if not _looks_india(loc):
+            continue
+        jid = j.get("id")
+        out.append(Job(
+            company="Tower Research Capital",
+            title=j.get("title", ""),
+            location=loc.title() if loc.islower() else loc,
+            url=j.get("absolute_url") or f"https://www.tower-research.com/open-positions/?gh_jid={jid}",
+            posted_at=_parse_dt(j.get("updated_at") or j.get("created_at")),
+            source="api.greenhouse.io",
+        ))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Public registry consumed by the aggregator.
 SCRAPERS = {
@@ -2026,6 +2106,9 @@ SCRAPERS = {
     # Bespoke
     "GitHub": fetch_github,
     "Oracle": fetch_oracle,
+    # Round 12 — Booking.com (custom JSON), Tower Research (Greenhouse).
+    "Booking.com": fetch_booking,
+    "Tower Research Capital": fetch_tower_research,
 }
 
 
