@@ -283,6 +283,16 @@ async def _extract_goldman(page) -> list[Job]:
         if href in seen:
             continue
         seen.add(href)
+        # higher.gs.com is a thin Apollo SPA shell; the rendered hydration
+        # is flaky in many browsers and often shows blank/404 even when HTTP
+        # returns 200. Rewrite to the canonical Oracle HCM detail URL so the
+        # link always opens directly to the job listing.
+        m = re.search(r"/roles/(\d+)", href)
+        if m:
+            href = (
+                "https://hdpc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/"
+                f"en/sites/LateralHiring/job/{m.group(1)}"
+            )
         out.append(Job(
             company="Goldman Sachs", title=title, location=loc,
             url=href, posted_at=None, source="higher.gs.com",
