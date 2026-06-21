@@ -94,6 +94,79 @@ _CACHE: dict[str, tuple[float, list[Job]]] = {}
 _CACHE_TTL_SECONDS = 5 * 60 * 60  # 5 hours; override per-request with ?refresh=true
 _MAX_CONCURRENT = 10  # cap total in-flight HTTP requests across all scrapers
 
+# Per-cache-key in-flight scrape jobs. Each job owns an asyncio.Task running
+# the actual scrape *detached from any request*, plus a per-company batch
+# log and a list of subscriber queues. The task survives client disconnects
+# (browser F5, navigation away), so a subsequent request piggybacks on the
+# same scrape instead of starting a fresh one.
+class _ScrapeJob:
+    __slots__ = ("task", "batches", "done", "subscribers")
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task | None = None
+        # (company_name, jobs) batches that have already completed.
+        self.batches: list[tuple[str, list[Job]]] = []
+        self.done: asyncio.Event = asyncio.Event()
+        # Each active stream_all() caller registers a queue here so the
+        # background task can fan out per-company batches to them live.
+        self.subscribers: list[asyncio.Queue] = []
+
+
+_INFLIGHT: dict[str, _ScrapeJob] = {}
+
+
+async def _run_scrape_bg(
+    job: "_ScrapeJob",
+    key: str,
+    roles: list[str],
+    skills: list[str],
+    companies: Optional[list[str]],
+) -> None:
+    """Background task body. Runs the full scrape, fans batches out to
+    subscribers, populates _CACHE on success. Never awaited by request
+    handlers directly — they wait on job.done or job.subscribers."""
+    try:
+        cross_seen: set[tuple[str, str, str]] = set()
+        merged: list[Job] = []
+        async for name, jobs in iter_all(roles=roles, skills=skills, companies=companies):
+            unique: list[Job] = []
+            for j in jobs:
+                k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
+                if k in cross_seen:
+                    continue
+                cross_seen.add(k)
+                unique.append(j)
+            merged.extend(unique)
+            job.batches.append((name, unique))
+            for q in list(job.subscribers):
+                q.put_nowait((name, unique))
+
+        get_store().upsert(merged)
+        _CACHE[key] = (time.time(), list(merged))
+    except Exception as e:  # pragma: no cover - logged, not propagated
+        log.exception("background scrape for key=%s failed: %s", key, e)
+    finally:
+        job.done.set()
+        for q in list(job.subscribers):
+            q.put_nowait(None)  # sentinel: stream is done
+        _INFLIGHT.pop(key, None)
+
+
+def _get_or_start_scrape(
+    key: str,
+    roles: list[str],
+    skills: list[str],
+    companies: Optional[list[str]],
+) -> "_ScrapeJob":
+    job = _INFLIGHT.get(key)
+    if job is not None:
+        log.info("piggyback: subscribing to in-flight scrape")
+        return job
+    job = _ScrapeJob()
+    job.task = asyncio.create_task(_run_scrape_bg(job, key, roles, skills, companies))
+    _INFLIGHT[key] = job
+    return job
+
 # Scrapers that are slow and/or return huge result sets. They are run only
 # after every other company has finished, so the initial /api/jobs stream
 # fills up quickly with the fast feeds. Keep in sync with HEAVY_COMPANIES in
@@ -164,26 +237,15 @@ async def fetch_all(
 
     key = _cache_key(roles, skills, companies)
     cached = _cache_get(key)
-    if cached is not None:
-        # Same (roles, skills, companies) was scraped recently. Reuse that
-        # scraper output and only re-do the archive union for the current
-        # posted_days. No network calls.
-        merged = list(cached)
-        _union_archive(merged, companies, posted_days)
-        _sort_jobs(merged)
-        return merged
+    if cached is None:
+        job = _get_or_start_scrape(key, roles, skills, companies)
+        # Background task survives request cancellation, so we await done
+        # plainly — if our request is cancelled we just stop waiting; the
+        # scrape continues and the next caller piggybacks on it.
+        await job.done.wait()
+        cached = _cache_get(key) or []
 
-    merged: list[Job] = []
-    async for _name, jobs in iter_all(roles=roles, skills=skills, companies=companies):
-        merged.extend(jobs)
-
-    # Persist what the scrapers just returned (hot if posted_at within 7d,
-    # else cold). Always cache the *scraper output* under the posted_days-free
-    # key so future requests can reuse it across different windows.
-    store = get_store()
-    store.upsert(merged)
-    _CACHE[key] = (time.time(), list(merged))
-
+    merged = list(cached)
     _union_archive(merged, companies, posted_days)
     _sort_jobs(merged)
     return merged
@@ -251,68 +313,76 @@ async def stream_all(
     companies: Optional[list[str]] = None,
     posted_days: Optional[int] = None,
 ):
-    """Like iter_all but also dedupes across companies and warms the cache when done.
+    """Yield (company, jobs) batches as they complete.
 
-    If a cached result is available, it is replayed immediately as a single
-    per-company batch sequence — no scrapers are invoked. The archive union
-    (for posted_days > 7) is replayed after the live batches.
+    First caller for a cache key starts the background scrape and gets
+    live batches via a subscriber queue. Subsequent callers (e.g. after a
+    browser F5 during the same scrape) replay any batches already finished
+    and then subscribe for the rest — no second scrape is started.
     """
     roles = roles if roles is not None else DEFAULT_ROLES
     skills = skills if skills is not None else DEFAULT_SKILLS
 
     key = _cache_key(roles, skills, companies)
+
+    async def _replay_archive(seen_keys: set[tuple[str, str, str]]):
+        if posted_days is not None and posted_days <= HOT_WINDOW.days:
+            return
+        archived: dict[str, list[Job]] = {}
+        for j in get_store().query(companies=companies, max_age_days=posted_days):
+            k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
+            if k in seen_keys:
+                continue
+            seen_keys.add(k)
+            archived.setdefault(j.company, []).append(j)
+        for name, jobs in archived.items():
+            yield name, jobs
+
     cached = _cache_get(key)
     if cached is not None:
         by_company: dict[str, list[Job]] = {}
         for j in cached:
             by_company.setdefault(j.company, []).append(j)
+        seen = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in cached}
         for name, jobs in by_company.items():
             yield name, jobs
-        # Replay archive rows if the current window asks for them.
-        if posted_days is None or posted_days > HOT_WINDOW.days:
-            existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in cached}
-            archived: dict[str, list[Job]] = {}
-            for j in get_store().query(companies=companies, max_age_days=posted_days):
-                k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
-                if k in existing:
-                    continue
-                existing.add(k)
-                archived.setdefault(j.company, []).append(j)
-            for name, jobs in archived.items():
-                yield name, jobs
+        async for name, jobs in _replay_archive(seen):
+            yield name, jobs
         return
 
-    cross_seen: set[tuple[str, str, str]] = set()
-    merged: list[Job] = []
-    async for name, jobs in iter_all(roles=roles, skills=skills, companies=companies):
-        unique: list[Job] = []
-        for j in jobs:
-            k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
-            if k in cross_seen:
-                continue
-            cross_seen.add(k)
-            unique.append(j)
-        merged.extend(unique)
-        yield name, unique
+    job = _get_or_start_scrape(key, roles, skills, companies)
 
-    store = get_store()
-    store.upsert(merged)
-    # Cache the *scraper output only* so a different posted_days window can
-    # reuse it without re-scraping.
-    _CACHE[key] = (time.time(), list(merged))
+    # Atomic subscribe: snapshot already-completed batches and register our
+    # queue in the same sync block (no awaits between). asyncio is
+    # single-threaded so no batch can slip in between snapshot and append.
+    snapshot = list(job.batches)
+    q: asyncio.Queue = asyncio.Queue()
+    job.subscribers.append(q)
+    done_already = job.done.is_set()
 
-    if posted_days is None or posted_days > HOT_WINDOW.days:
-        existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in merged}
-        archived: dict[str, list[Job]] = {}
-        for j in store.query(companies=companies, max_age_days=posted_days):
-            k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
-            if k in existing:
-                continue
-            existing.add(k)
-            archived.setdefault(j.company, []).append(j)
-        for name, jobs in archived.items():
-            merged.extend(jobs)
+    seen_keys: set[tuple[str, str, str]] = set()
+    try:
+        for name, jobs in snapshot:
+            for j in jobs:
+                seen_keys.add((j.company.lower(), (j.url or "").lower(), j.title.lower()))
             yield name, jobs
+        if not done_already:
+            while True:
+                item = await q.get()
+                if item is None:
+                    break
+                name, jobs = item
+                for j in jobs:
+                    seen_keys.add((j.company.lower(), (j.url or "").lower(), j.title.lower()))
+                yield name, jobs
+    finally:
+        try:
+            job.subscribers.remove(q)
+        except ValueError:
+            pass
+
+    async for name, jobs in _replay_archive(seen_keys):
+        yield name, jobs
 
 
 def clear_cache(full: bool = False) -> None:
@@ -320,11 +390,17 @@ def clear_cache(full: bool = False) -> None:
 
     When `full=True` (used by ?refresh=true), also purge the persistent job
     store on disk — the next request will repopulate everything from live
-    scrapes.
+    scrapes. In-flight scrape jobs are left alone so concurrent callers
+    still piggyback on whatever scrape is running; that job will rewrite
+    _CACHE when it completes.
     """
     _CACHE.clear()
     if full:
         get_store().clear_all()
+
+
+def inflight_keys() -> list[str]:
+    return list(_INFLIGHT.keys())
 
 
 async def probe_sources(query: str = "data") -> list[dict]:
