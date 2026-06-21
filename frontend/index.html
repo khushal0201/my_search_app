@@ -37,12 +37,12 @@
     <label>
       Posted within
       <select id="posted">
-        <option value="0">Any time</option>
         <option value="1">Last 24 hours</option>
-        <option value="7">Last 7 days</option>
+        <option value="7" selected>Last 7 days</option>
         <option value="14">Last 2 weeks</option>
         <option value="30">Last 30 days</option>
         <option value="90">Last 3 months</option>
+        <option value="0">Any time</option>
       </select>
     </label>
     <button id="search">Search</button>
@@ -67,6 +67,6 @@
     </table>
   </main>
 
-  <script src="/static/app.js?v=15"></script>
+  <script src="/static/app.js?v=16"></script>
 </body>
 </html>

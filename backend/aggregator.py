@@ -10,6 +10,7 @@ import httpx
 
 from backend.models import Job
 from backend.scrapers.companies import SCRAPERS, _matches_query
+from backend.store import HOT_WINDOW, get_store
 
 log = logging.getLogger("aggregator")
 
@@ -112,9 +113,10 @@ async def _run_one(name: str, fn, client: httpx.AsyncClient, query: str,
             return []
 
 
-def _cache_key(roles: list[str], skills: list[str], companies: Optional[list[str]]) -> str:
+def _cache_key(roles: list[str], skills: list[str], companies: Optional[list[str]],
+               posted_days: Optional[int] = None) -> str:
     c = sorted(companies) if companies else None
-    return json.dumps({"r": roles, "s": skills, "c": c}, sort_keys=True)
+    return json.dumps({"r": roles, "s": skills, "c": c, "d": posted_days}, sort_keys=True)
 
 
 def _cache_get(key: str) -> Optional[list[Job]]:
@@ -132,11 +134,12 @@ async def fetch_all(
     roles: Optional[list[str]] = None,
     skills: Optional[list[str]] = None,
     companies: Optional[list[str]] = None,
+    posted_days: Optional[int] = None,
 ) -> list[Job]:
     roles = roles if roles is not None else DEFAULT_ROLES
     skills = skills if skills is not None else DEFAULT_SKILLS
 
-    key = _cache_key(roles, skills, companies)
+    key = _cache_key(roles, skills, companies, posted_days)
     cached = _cache_get(key)
     if cached is not None:
         return cached
@@ -144,6 +147,21 @@ async def fetch_all(
     merged: list[Job] = []
     async for _name, jobs in iter_all(roles=roles, skills=skills, companies=companies):
         merged.extend(jobs)
+
+    # Persist everything we just observed (hot if posted_at within 7d, else cold).
+    store = get_store()
+    store.upsert(merged)
+
+    # When the caller asked for older-than-7-day jobs (or any time), union in
+    # archived rows from disk that the current scrapers no longer return.
+    if posted_days is None or posted_days > HOT_WINDOW.days:
+        existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in merged}
+        for j in store.query(companies=companies, max_age_days=posted_days):
+            k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
+            if k in existing:
+                continue
+            existing.add(k)
+            merged.append(j)
 
     _sort_jobs(merged)
     _CACHE[key] = (time.time(), merged)
@@ -210,6 +228,7 @@ async def stream_all(
     roles: Optional[list[str]] = None,
     skills: Optional[list[str]] = None,
     companies: Optional[list[str]] = None,
+    posted_days: Optional[int] = None,
 ):
     """Like iter_all but also dedupes across companies and warms the cache when done.
 
@@ -219,7 +238,7 @@ async def stream_all(
     roles = roles if roles is not None else DEFAULT_ROLES
     skills = skills if skills is not None else DEFAULT_SKILLS
 
-    key = _cache_key(roles, skills, companies)
+    key = _cache_key(roles, skills, companies, posted_days)
     cached = _cache_get(key)
     if cached is not None:
         by_company: dict[str, list[Job]] = {}
@@ -242,12 +261,39 @@ async def stream_all(
         merged.extend(unique)
         yield name, unique
 
+    store = get_store()
+    store.upsert(merged)
+
+    # When the user wants older-than-7-day jobs, send the archive rows as a
+    # final synthetic batch grouped by company so the streaming UI can render
+    # them without a second round-trip.
+    if posted_days is None or posted_days > HOT_WINDOW.days:
+        existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in merged}
+        archived: dict[str, list[Job]] = {}
+        for j in store.query(companies=companies, max_age_days=posted_days):
+            k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
+            if k in existing:
+                continue
+            existing.add(k)
+            archived.setdefault(j.company, []).append(j)
+        for name, jobs in archived.items():
+            merged.extend(jobs)
+            yield name, jobs
+
     _sort_jobs(merged)
     _CACHE[key] = (time.time(), merged)
 
 
-def clear_cache() -> None:
+def clear_cache(full: bool = False) -> None:
+    """Drop the per-query memory cache.
+
+    When `full=True` (used by ?refresh=true), also purge the persistent job
+    store on disk — the next request will repopulate everything from live
+    scrapes.
+    """
     _CACHE.clear()
+    if full:
+        get_store().clear_all()
 
 
 async def probe_sources(query: str = "data") -> list[dict]:

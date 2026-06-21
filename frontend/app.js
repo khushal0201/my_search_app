@@ -162,9 +162,13 @@ function escapeHtml(s) {
 async function loadJobs(refresh = false) {
   const roles = $('roles').value.trim();
   const skills = $('skills').value.trim();
+  const postedDays = parseInt($('posted').value, 10) || 0;
   const params = new URLSearchParams();
   params.set('roles', roles);
   params.set('skills', skills);
+  // Tell the server the user's "Posted within" window so it knows whether
+  // to serve hot-tier only (<=7 days) or union the on-disk archive (>7).
+  if (postedDays > 0) params.set('posted_days', String(postedDays));
   // Always fetch every company so the server can serve from one cache key.
   // The company dropdown filters client-side in render().
   if (refresh) params.set('refresh', 'true');
@@ -291,7 +295,10 @@ function render() {
 
 $('search').addEventListener('click', () => loadJobs(false));
 $('refresh').addEventListener('click', () => loadJobs(true));
-$('posted').addEventListener('change', render);
+// "Posted within" affects what the server returns (hot tier vs hot+archive
+// union), so changing it must hit the API. The server has its own per-query
+// cache so repeated toggles are cheap.
+$('posted').addEventListener('change', () => loadJobs(false));
 for (const id of ['roles', 'skills']) {
   $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') loadJobs(); });
 }

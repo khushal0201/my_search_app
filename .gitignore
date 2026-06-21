@@ -28,6 +28,9 @@ dist/
 Thumbs.db
 desktop.ini
 
+# Persistent job archive (SQLite)
+data/
+
 # Logs / temp / probe artifacts
 *.log
 *.tmp
