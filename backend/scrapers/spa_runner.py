@@ -439,10 +439,9 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # ?country=India filter on /en/jobs/ returns ~10 India roles per page.
     ("Wells Fargo", "https://www.wellsfargojobs.com/en/jobs/?country=India", None),
     ("Fidelity", "https://jobs.fidelity.com/en/search-jobs/India", None),
-    # Goldman Sachs — higher.gs.com is now a client-rendered Apollo SPA, so
-    # the previous __NEXT_DATA__ scraper returns an empty skeleton. Use the
-    # custom hydration-aware extractor to walk the rendered role anchors.
-    ("Goldman Sachs", "https://higher.gs.com/results?sort=RELEVANCE&LOCATION_TAG=India", _extract_goldman),
+    # Goldman Sachs moved to HTTP scraper in companies.py (Oracle HCM REST API
+    # at hdpc.fa.us2.oraclecloud.com siteNumber=CX_2 — far more reliable than
+    # the Apollo SPA on higher.gs.com which renders blank for many users).
     # Removed in Round 6 verification sweep:
     #   PaisaBazaar — no ATS at all (email-only: careers+tech@paisabazaar.com).
     #   Cleartrip — shares the Flipkart TurboHire instance, already covered by

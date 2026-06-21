@@ -1809,6 +1809,63 @@ async def fetch_bcg(client: httpx.AsyncClient, query: str) -> list[Job]:
 # India GeographyId = 300000000469485 (~355 roles as of 2025). Note: pagination
 # params (offset/limit) must live *inside* the finder string — the standard
 # REST query-string ?offset=&limit= is ignored by this endpoint.
+# Goldman Sachs — Oracle HCM Cloud at hdpc.fa.us2.oraclecloud.com (site
+# "LateralHiring", siteNumber=CX_2). higher.gs.com is now a thin Apollo SPA
+# shell whose hydration is flaky in many browsers, so we hit the Oracle REST
+# API directly. India GeographyId=300000000228786 (~320 roles). Same finder-
+# string pagination gotcha as Honeywell: offset/limit must live inside the
+# finder, not in the query string.
+async def fetch_goldman_sachs(client: httpx.AsyncClient, query: str) -> list[Job]:
+    base = "https://hdpc.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+    out: list[Job] = []
+    seen: set[str] = set()
+    page_size = 200
+    for page in range(6):
+        offset = page * page_size
+        finder = (
+            f"findReqs;siteNumber=CX_2,locationId=300000000228786,"
+            f"keyword={query},sortBy=POSTING_DATES_DESC,"
+            f"offset={offset},limit={page_size}"
+        )
+        params = {
+            "onlyData": "true",
+            "expand": "requisitionList.secondaryLocations",
+            "finder": finder,
+        }
+        try:
+            r = await client.get(base, params=params, headers=DEFAULT_HEADERS, timeout=25)
+            r.raise_for_status()
+            data = r.json()
+            items = data.get("items") or []
+            reqs = items[0].get("requisitionList", []) if items and isinstance(items[0], dict) else []
+            if not reqs:
+                break
+            added = 0
+            for j in reqs:
+                jid = j.get("Id") or ""
+                if not jid or jid in seen:
+                    continue
+                seen.add(jid)
+                added += 1
+                loc = j.get("PrimaryLocation") or "India"
+                if not _looks_india(loc) and j.get("PrimaryLocationCountry") != "IN":
+                    continue
+                out.append(Job(
+                    company="Goldman Sachs",
+                    title=j.get("Title", ""),
+                    location=loc,
+                    url=f"https://hdpc.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/LateralHiring/job/{jid}",
+                    posted_at=_parse_dt(j.get("PostedDate")),
+                    source="higher.gs.com (Oracle HCM)",
+                ))
+            if added == 0 or len(reqs) < page_size:
+                break
+        except Exception as e:
+            log.warning("goldman sachs page %d failed: %s", page, e)
+            break
+    return out
+
+
 async def fetch_honeywell(client: httpx.AsyncClient, query: str) -> list[Job]:
     base = "https://ibqbjb.fa.ocs.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
     out: list[Job] = []
@@ -1872,7 +1929,9 @@ SCRAPERS = {
     "Visa": fetch_visa,
     "Citi": fetch_citi,
     "JPMorgan Chase": fetch_jpmorgan,
-    # Goldman Sachs moved to Playwright SPA (higher.gs.com is now Apollo-only).
+    # Round 11+1 — Goldman Sachs moved off broken higher.gs.com Apollo SPA
+    # to direct Oracle HCM API (siteNumber=CX_2 on hdpc tenant, ~320 India roles).
+    "Goldman Sachs": fetch_goldman_sachs,
     "Morgan Stanley": fetch_morgan_stanley,
     "American Express": fetch_amex,
     # Round 1 additions
