@@ -31,6 +31,9 @@ DEFAULT_SKILLS: list[str] = [
     "hadoop",
     "scikit-learn",
     "crewai",
+    "kafka",
+    "big data",
+    "big-data",
 ]
 
 _CACHE: dict[str, tuple[float, list[Job]]] = {}
