@@ -442,6 +442,36 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # Goldman Sachs moved to HTTP scraper in companies.py (Oracle HCM REST API
     # at hdpc.fa.us2.oraclecloud.com siteNumber=CX_2 — far more reliable than
     # the Apollo SPA on higher.gs.com which renders blank for many users).
+    # Round 12 SPA additions:
+    # HSBC — uses Avature widget at mycareer.hsbc.com; the SearchJobs URL with
+    # facetcountry=India renders a job card list after JS hydration.
+    ("HSBC", "https://mycareer.hsbc.com/en_GB/external/SearchJobs/?facetcountry=India", None),
+    # Housing.com — Freshteam tenant `housing` at housing.freshteam.com.
+    # Public REST is auth-walled but /jobs renders all open positions.
+    ("Housing.com", "https://housing.freshteam.com/jobs", None),
+    # MakeMyTrip — careers.makemytrip.com is a React SPA behind Akamai bot
+    # mgmt. Playwright with a real Chromium UA can usually render the cards.
+    # Goibibo roles also appear on this same board (MMT Group).
+    ("MakeMyTrip", "https://careers.makemytrip.com/", None),
+    # Round 13 — global banks via Avature / Workday public search pages.
+    # Standard Chartered uses Avature widget at scb.taleo.net superseded by
+    # search.sc.com which is also Avature. Use the public job-search page.
+    ("Standard Chartered", "https://scb.wd3.myworkdayjobs.com/en-US/Standard_Chartered_Career_Site?locationCountry=c4f78be1a8f14da0ab49ce1162348a5e", None),
+    # Barclays uses TalentBrew at search.jobs.barclays which is fully SSR but
+    # paginated; the India landing page exposes ~30 cards.
+    ("Barclays", "https://search.jobs.barclays/search-jobs/India", None),
+    # Nomura uses Workday tenant `nomura` with site name `Career`. The hosted
+    # search page works without auth and renders India roles in cards.
+    ("Nomura", "https://nomura.wd3.myworkdayjobs.com/en-US/Career?locationCountry=c4f78be1a8f14da0ab49ce1162348a5e", None),
+    # UBS uses Avature widget at https://jobs.ubs.com. Filtering by country
+    # India via query string.
+    ("UBS", "https://jobs.ubs.com/TGnewUI/Search/Home/Home?partnerid=25008&siteid=5012#keyWordSearch=&locationSearch=India", None),
+    # Société Générale uses Avature at https://careers.societegenerale.com.
+    ("Societe Generale", "https://careers.societegenerale.com/offers?country=India", None),
+    # BNP Paribas uses Avature at https://group.bnpparibas/en/careers/offers.
+    ("BNP Paribas", "https://group.bnpparibas/en/careers/offers?refinementList%5Bcountry%5D%5B0%5D=India", None),
+    # RBC uses Workday tenant `rbc` with site `RBC`. India page exposes cards.
+    ("RBC", "https://jobs.rbc.com/ca/en/search-results?keywords=India", None),
     # Removed in Round 6 verification sweep:
     #   PaisaBazaar — no ATS at all (email-only: careers+tech@paisabazaar.com).
     #   Cleartrip — shares the Flipkart TurboHire instance, already covered by

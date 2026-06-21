@@ -1997,6 +1997,50 @@ async def fetch_tower_research(client: httpx.AsyncClient, query: str) -> list[Jo
     return out
 
 
+# Round 13 — quant/HFT + travel via Greenhouse public boards.
+async def _fetch_greenhouse_india(client: httpx.AsyncClient, board: str,
+                                   company: str, default_url: str | None = None) -> list[Job]:
+    url = f"https://api.greenhouse.io/v1/boards/{board}/jobs"
+    try:
+        r = await client.get(url, headers=DEFAULT_HEADERS, timeout=25)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        log.warning("%s greenhouse failed: %s", company, e)
+        return []
+    out: list[Job] = []
+    for j in data.get("jobs") or []:
+        loc = ((j.get("location") or {}).get("name") or "").strip()
+        if not _looks_india(loc):
+            continue
+        jid = j.get("id")
+        out.append(Job(
+            company=company,
+            title=j.get("title", ""),
+            location=loc.title() if loc.islower() else loc,
+            url=j.get("absolute_url") or (default_url or url),
+            posted_at=_parse_dt(j.get("updated_at") or j.get("created_at")),
+            source="api.greenhouse.io",
+        ))
+    return out
+
+
+async def fetch_jump_trading(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_greenhouse_india(client, "jumptrading", "Jump Trading")
+
+
+async def fetch_imc(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_greenhouse_india(client, "imc", "IMC Trading")
+
+
+async def fetch_squarepoint(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_greenhouse_india(client, "squarepointcapital", "Squarepoint Capital")
+
+
+async def fetch_agoda(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_greenhouse_india(client, "agoda", "Agoda")
+
+
 # ---------------------------------------------------------------------------
 # Public registry consumed by the aggregator.
 SCRAPERS = {
@@ -2109,6 +2153,11 @@ SCRAPERS = {
     # Round 12 — Booking.com (custom JSON), Tower Research (Greenhouse).
     "Booking.com": fetch_booking,
     "Tower Research Capital": fetch_tower_research,
+    # Round 13 — quant/HFT + travel via Greenhouse.
+    "Jump Trading": fetch_jump_trading,
+    "IMC Trading": fetch_imc,
+    "Squarepoint Capital": fetch_squarepoint,
+    "Agoda": fetch_agoda,
 }
 
 
