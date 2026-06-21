@@ -173,10 +173,12 @@ async function loadJobs(refresh = false) {
   // The company dropdown filters client-side in render().
   if (refresh) params.set('refresh', 'true');
 
-  // Reflect the refresh state in the browser URL so users can see/share/bookmark it.
+  // `refresh=true` is a one-shot action (purges memory + disk). Keep it out
+  // of the URL so a subsequent browser reload doesn't accidentally trigger
+  // a second full refresh while the first one is still in flight.
   const urlParams = new URLSearchParams(window.location.search);
-  if (refresh) urlParams.set('refresh', 'true');
-  else { urlParams.delete('refresh'); urlParams.delete('fresh'); }
+  urlParams.delete('refresh');
+  urlParams.delete('fresh');
   const qs = urlParams.toString();
   history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
 

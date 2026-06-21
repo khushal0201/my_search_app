@@ -113,10 +113,15 @@ async def _run_one(name: str, fn, client: httpx.AsyncClient, query: str,
             return []
 
 
-def _cache_key(roles: list[str], skills: list[str], companies: Optional[list[str]],
-               posted_days: Optional[int] = None) -> str:
+def _cache_key(roles: list[str], skills: list[str], companies: Optional[list[str]]) -> str:
+    # NOTE: posted_days is deliberately NOT part of the key. The scrapers
+    # always return the same set of jobs regardless of the user's "Posted
+    # within" choice — that choice only affects whether we union the on-disk
+    # archive into the response. Keeping it out of the key means switching
+    # from 7 days to 3 months while the cache is warm serves from RAM + the
+    # store instead of re-running every scraper.
     c = sorted(companies) if companies else None
-    return json.dumps({"r": roles, "s": skills, "c": c, "d": posted_days}, sort_keys=True)
+    return json.dumps({"r": roles, "s": skills, "c": c}, sort_keys=True)
 
 
 def _cache_get(key: str) -> Optional[list[Job]]:
@@ -130,6 +135,24 @@ def _sort_jobs(jobs: list[Job]) -> None:
     jobs.sort(key=lambda j: (j.posted_at is None, -(j.posted_at.timestamp() if j.posted_at else 0)))
 
 
+def _union_archive(merged: list[Job], companies: Optional[list[str]],
+                    posted_days: Optional[int]) -> list[Job]:
+    """Append on-disk archive rows older than the hot window when the caller
+    asked for posted_days > HOT_WINDOW (or any time). De-dupes against the
+    rows already in `merged`.
+    """
+    if posted_days is not None and posted_days <= HOT_WINDOW.days:
+        return merged
+    existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in merged}
+    for j in get_store().query(companies=companies, max_age_days=posted_days):
+        k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
+        if k in existing:
+            continue
+        existing.add(k)
+        merged.append(j)
+    return merged
+
+
 async def fetch_all(
     roles: Optional[list[str]] = None,
     skills: Optional[list[str]] = None,
@@ -139,32 +162,30 @@ async def fetch_all(
     roles = roles if roles is not None else DEFAULT_ROLES
     skills = skills if skills is not None else DEFAULT_SKILLS
 
-    key = _cache_key(roles, skills, companies, posted_days)
+    key = _cache_key(roles, skills, companies)
     cached = _cache_get(key)
     if cached is not None:
-        return cached
+        # Same (roles, skills, companies) was scraped recently. Reuse that
+        # scraper output and only re-do the archive union for the current
+        # posted_days. No network calls.
+        merged = list(cached)
+        _union_archive(merged, companies, posted_days)
+        _sort_jobs(merged)
+        return merged
 
     merged: list[Job] = []
     async for _name, jobs in iter_all(roles=roles, skills=skills, companies=companies):
         merged.extend(jobs)
 
-    # Persist everything we just observed (hot if posted_at within 7d, else cold).
+    # Persist what the scrapers just returned (hot if posted_at within 7d,
+    # else cold). Always cache the *scraper output* under the posted_days-free
+    # key so future requests can reuse it across different windows.
     store = get_store()
     store.upsert(merged)
+    _CACHE[key] = (time.time(), list(merged))
 
-    # When the caller asked for older-than-7-day jobs (or any time), union in
-    # archived rows from disk that the current scrapers no longer return.
-    if posted_days is None or posted_days > HOT_WINDOW.days:
-        existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in merged}
-        for j in store.query(companies=companies, max_age_days=posted_days):
-            k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
-            if k in existing:
-                continue
-            existing.add(k)
-            merged.append(j)
-
+    _union_archive(merged, companies, posted_days)
     _sort_jobs(merged)
-    _CACHE[key] = (time.time(), merged)
     return merged
 
 
@@ -233,12 +254,13 @@ async def stream_all(
     """Like iter_all but also dedupes across companies and warms the cache when done.
 
     If a cached result is available, it is replayed immediately as a single
-    per-company batch sequence — no scrapers are invoked.
+    per-company batch sequence — no scrapers are invoked. The archive union
+    (for posted_days > 7) is replayed after the live batches.
     """
     roles = roles if roles is not None else DEFAULT_ROLES
     skills = skills if skills is not None else DEFAULT_SKILLS
 
-    key = _cache_key(roles, skills, companies, posted_days)
+    key = _cache_key(roles, skills, companies)
     cached = _cache_get(key)
     if cached is not None:
         by_company: dict[str, list[Job]] = {}
@@ -246,6 +268,18 @@ async def stream_all(
             by_company.setdefault(j.company, []).append(j)
         for name, jobs in by_company.items():
             yield name, jobs
+        # Replay archive rows if the current window asks for them.
+        if posted_days is None or posted_days > HOT_WINDOW.days:
+            existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in cached}
+            archived: dict[str, list[Job]] = {}
+            for j in get_store().query(companies=companies, max_age_days=posted_days):
+                k = (j.company.lower(), (j.url or "").lower(), j.title.lower())
+                if k in existing:
+                    continue
+                existing.add(k)
+                archived.setdefault(j.company, []).append(j)
+            for name, jobs in archived.items():
+                yield name, jobs
         return
 
     cross_seen: set[tuple[str, str, str]] = set()
@@ -263,10 +297,10 @@ async def stream_all(
 
     store = get_store()
     store.upsert(merged)
+    # Cache the *scraper output only* so a different posted_days window can
+    # reuse it without re-scraping.
+    _CACHE[key] = (time.time(), list(merged))
 
-    # When the user wants older-than-7-day jobs, send the archive rows as a
-    # final synthetic batch grouped by company so the streaming UI can render
-    # them without a second round-trip.
     if posted_days is None or posted_days > HOT_WINDOW.days:
         existing = {(j.company.lower(), (j.url or "").lower(), j.title.lower()) for j in merged}
         archived: dict[str, list[Job]] = {}
@@ -279,9 +313,6 @@ async def stream_all(
         for name, jobs in archived.items():
             merged.extend(jobs)
             yield name, jobs
-
-    _sort_jobs(merged)
-    _CACHE[key] = (time.time(), merged)
 
 
 def clear_cache(full: bool = False) -> None:
