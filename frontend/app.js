@@ -11,6 +11,9 @@ let allCompanies = [];
 // so they don't block the initial refresh. Keep in sync with HEAVY_COMPANIES in
 // backend/aggregator.py.
 const HEAVY_COMPANIES = new Set(['Infosys', 'PwC', 'Accenture', 'KPMG', 'Bosch']);
+// Additional companies that are unchecked by default in the UI only (not
+// deferred server-side). Users can opt them in.
+const UNCHECKED_BY_DEFAULT = new Set(['NTT Data']);
 
 async function loadCompanies() {
   try {
@@ -21,7 +24,7 @@ async function loadCompanies() {
     // Default state: everything selected except the heavy feeds.
     selectedCompanies.clear();
     for (const c of allCompanies) {
-      if (!HEAVY_COMPANIES.has(c)) selectedCompanies.add(c);
+      if (!HEAVY_COMPANIES.has(c) && !UNCHECKED_BY_DEFAULT.has(c)) selectedCompanies.add(c);
     }
 
     // Seed the source pills from the company list so they show up immediately,
