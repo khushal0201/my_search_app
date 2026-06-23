@@ -472,11 +472,12 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("BNP Paribas", "https://group.bnpparibas/en/careers/offers?refinementList%5Bcountry%5D%5B0%5D=India", None),
     # RBC uses Workday tenant `rbc` with site `RBC`. India page exposes cards.
     ("RBC", "https://jobs.rbc.com/ca/en/search-results?keywords=India", None),
-    # Round 14 — McKinsey. www.mckinsey.com blocks raw httpx (read timeouts
-    # under anti-bot), but Playwright with a real Chromium UA renders the
-    # search-jobs results page. countries=India narrows the listing server-
-    # side; the generic anchor extractor picks up /careers/search-jobs/jobs/<id>.
-    ("McKinsey", "https://www.mckinsey.com/careers/search-jobs?countries=India", None),
+    # McKinsey is unreachable from this environment: www.mckinsey.com returns
+    # net::ERR_HTTP2_PROTOCOL_ERROR in Chromium and a read-timeout in httpx
+    # (Akamai/Imperva WAF blocks non-browser clients). Forcing HTTP/1.1 with
+    # --disable-http2 stops the protocol error but the page never reaches
+    # domcontentloaded within 45s. Leaving the target out until a workaround
+    # (residential proxy / different vantage point) is available.
     # Removed in Round 6 verification sweep:
     #   PaisaBazaar — no ATS at all (email-only: careers+tech@paisabazaar.com).
     #   Cleartrip — shares the Flipkart TurboHire instance, already covered by
