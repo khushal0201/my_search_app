@@ -45,6 +45,8 @@ DEFAULT_SKILLS: list[str] = [
     "databricks",
     "snowflake",
     "dbt",
+    "etl",
+    "elt",
     "bigquery",
     "redshift",
     "flink",
