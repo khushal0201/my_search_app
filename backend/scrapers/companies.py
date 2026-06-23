@@ -1803,6 +1803,64 @@ async def fetch_bcg(client: httpx.AsyncClient, query: str) -> list[Job]:
     return out
 
 
+# Bain — bespoke EPiServer-style JSON endpoint at /en/api/jobsearch/keyword/get.
+# Each result is a global role template whose "Location" field is a list of
+# every office where the role is open. India offices: Bengaluru, Mumbai, New
+# Delhi, Gurgaon. We emit one Job per role that lists any India city.
+_BAIN_INDIA_CITIES = {
+    "bengaluru", "bangalore", "mumbai", "new delhi", "delhi",
+    "gurgaon", "gurugram", "noida", "chennai", "hyderabad",
+    "pune", "kolkata", "ahmedabad",
+}
+
+
+async def fetch_bain(client: httpx.AsyncClient, query: str) -> list[Job]:
+    url = "https://www.bain.com/en/api/jobsearch/keyword/get"
+    headers = {
+        **DEFAULT_HEADERS,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.bain.com/careers/find-a-role/",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    params = {"keyword": query or "", "page": 1, "size": 100}
+    try:
+        r = await client.get(url, params=params, headers=headers, timeout=20)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+    except Exception as e:
+        log.warning("bain failed: %s", e)
+        return []
+    out: list[Job] = []
+    for j in data.get("results", []) or []:
+        if not isinstance(j, dict):
+            continue
+        title = (j.get("JobTitle") or "").strip()
+        if not title:
+            continue
+        if query and not _matches_query(title, query):
+            continue
+        loc_list = j.get("Location") or []
+        india_offices = [
+            c.strip() for c in loc_list
+            if isinstance(c, str) and c.strip().lower() in _BAIN_INDIA_CITIES
+        ]
+        if not india_offices:
+            continue
+        link = j.get("Link") or ""
+        href = ("https://www.bain.com" + link) if link.startswith("/") else (link or "https://www.bain.com/careers/find-a-role/")
+        out.append(Job(
+            company="Bain",
+            title=title,
+            location=", ".join(india_offices) + ", India",
+            url=href,
+            posted_at=None,
+            source="bain.com",
+        ))
+    return out
+
+
 # Honeywell — Oracle HCM Cloud at ibqbjb.fa.ocs.oraclecloud.com. The careers.honeywell.com
 # Phenom skin proxies to the same backend, but hitting the Oracle host directly
 # is more reliable (the Phenom shell tends to ERR_HTTP2_PROTOCOL_ERROR in Chromium).
@@ -2116,6 +2174,9 @@ SCRAPERS = {
     "KPMG": fetch_kpmg,
     # Round 9 — replaced Playwright targets with HTTP scrapers.
     "BCG": fetch_bcg,
+    # Round 14 — Bain moved off Playwright (generic anchor extractor returned
+    # 0) to the bespoke /en/api/jobsearch/keyword/get JSON endpoint.
+    "Bain": fetch_bain,
     # Round 11 — Honeywell moved off broken Phenom SPA to direct Oracle HCM API.
     "Honeywell": fetch_honeywell,
     # Qualcomm reverted to Playwright in round 10: Eightfold SSR yields only

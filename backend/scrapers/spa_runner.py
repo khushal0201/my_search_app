@@ -408,7 +408,7 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("Nykaa", "https://careers.nykaa.com/", None),
     # Optum moved to HTTP scraper (TalentBrew SSR anchors).
     ("FedEx", "https://careers.fedex.com/fedex/jobs?location=India", None),
-    ("Bain", "https://www.bain.com/careers/find-a-role/?filters=offices%28274%2C276%2C275%29%7C", None),
+    # Bain moved to HTTP scraper (bespoke /en/api/jobsearch/keyword/get JSON).
     ("Bank of America", "https://careers.bankofamerica.com/en-us/job-search?ref=country&country=India", None),
     ("Deloitte", "https://southasiacareers.deloitte.com/go/Deloitte-India/718244/", None),
     # Moody's moved to HTTP scraper (TalentBrew SSR anchors).
@@ -472,6 +472,11 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     ("BNP Paribas", "https://group.bnpparibas/en/careers/offers?refinementList%5Bcountry%5D%5B0%5D=India", None),
     # RBC uses Workday tenant `rbc` with site `RBC`. India page exposes cards.
     ("RBC", "https://jobs.rbc.com/ca/en/search-results?keywords=India", None),
+    # Round 14 — McKinsey. www.mckinsey.com blocks raw httpx (read timeouts
+    # under anti-bot), but Playwright with a real Chromium UA renders the
+    # search-jobs results page. countries=India narrows the listing server-
+    # side; the generic anchor extractor picks up /careers/search-jobs/jobs/<id>.
+    ("McKinsey", "https://www.mckinsey.com/careers/search-jobs?countries=India", None),
     # Removed in Round 6 verification sweep:
     #   PaisaBazaar — no ATS at all (email-only: careers+tech@paisabazaar.com).
     #   Cleartrip — shares the Flipkart TurboHire instance, already covered by
