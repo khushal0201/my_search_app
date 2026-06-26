@@ -2099,6 +2099,78 @@ async def fetch_agoda(client: httpx.AsyncClient, query: str) -> list[Job]:
     return await _fetch_greenhouse_india(client, "agoda", "Agoda")
 
 
+# Round 14 — additional HFT/quant firms on public Greenhouse boards.
+async def fetch_worldquant(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_greenhouse_india(client, "worldquant", "WorldQuant")
+
+
+async def fetch_alphagrep(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_greenhouse_india(client, "alphagrepsecurities", "AlphaGrep Securities")
+
+
+async def fetch_graviton(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_greenhouse_india(client, "gravitonresearchcapital", "Graviton Research Capital")
+
+
+async def fetch_optiver(client: httpx.AsyncClient, query: str) -> list[Job]:
+    # Optiver publishes via the "optiverus" Greenhouse board; the "optiver"
+    # slug exists but is empty and the *us suffix carries the active roles
+    # across all regions including Mumbai.
+    return await _fetch_greenhouse_india(client, "optiverus", "Optiver")
+
+
+async def fetch_millennium(client: httpx.AsyncClient, query: str) -> list[Job]:
+    # Millennium uses Eightfold (mlp.eightfold.ai). The public JSON endpoint
+    # returns up to ~10 positions per call regardless of `num`, so paginate via
+    # `start`. We over-fetch then filter by location to be safe.
+    base = "https://mlp.eightfold.ai/api/apply/v2/jobs"
+    out: list[Job] = []
+    seen: set[int] = set()
+    start = 0
+    page_size = 10
+    max_pages = 30  # safety cap (≤300 positions scanned)
+    for _ in range(max_pages):
+        params = {
+            "domain": "mlp.com",
+            "Location": "India",
+            "start": start,
+            "num": page_size,
+            "sort_by": "relevance",
+        }
+        try:
+            r = await client.get(base, params=params, headers=DEFAULT_HEADERS, timeout=25)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            log.warning("Millennium Eightfold page %d failed: %s", start, e)
+            break
+        positions = data.get("positions") or []
+        if not positions:
+            break
+        new_count = 0
+        for p in positions:
+            pid = p.get("id")
+            if pid in seen:
+                continue
+            seen.add(pid)
+            loc = (p.get("location") or "").strip()
+            if not _looks_india(loc):
+                continue
+            out.append(Job(
+                company="Millennium",
+                title=(p.get("name") or p.get("posting_name") or "").strip(),
+                location=loc,
+                url=p.get("canonicalPositionUrl") or f"https://mlp.eightfold.ai/careers/job/{pid}",
+                posted_at=_parse_dt(p.get("t_update") or p.get("t_create")),
+                source="mlp.eightfold.ai",
+            ))
+            new_count += 1
+        if new_count == 0 and len(positions) < page_size:
+            break
+        start += page_size
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Public registry consumed by the aggregator.
 SCRAPERS = {
@@ -2219,6 +2291,12 @@ SCRAPERS = {
     "IMC Trading": fetch_imc,
     "Squarepoint Capital": fetch_squarepoint,
     "Agoda": fetch_agoda,
+    # Round 14 — more HFT/quant via Greenhouse.
+    "WorldQuant": fetch_worldquant,
+    "AlphaGrep Securities": fetch_alphagrep,
+    "Graviton Research Capital": fetch_graviton,
+    "Optiver": fetch_optiver,
+    "Millennium": fetch_millennium,
 }
 
 
