@@ -2119,6 +2119,14 @@ async def fetch_optiver(client: httpx.AsyncClient, query: str) -> list[Job]:
     return await _fetch_greenhouse_india(client, "optiverus", "Optiver")
 
 
+async def fetch_xtx_markets(client: httpx.AsyncClient, query: str) -> list[Job]:
+    # XTX Markets uses the "xtxmarketstechnologies" Greenhouse board (the
+    # short "xtxmarkets" slug 404s). No India roles posted at the moment, but
+    # they have advertised Mumbai positions in the past and this keeps the
+    # firm in the daily sweep so any new Mumbai listing surfaces immediately.
+    return await _fetch_greenhouse_india(client, "xtxmarketstechnologies", "XTX Markets")
+
+
 async def fetch_millennium(client: httpx.AsyncClient, query: str) -> list[Job]:
     # Millennium uses Eightfold (mlp.eightfold.ai). The public JSON endpoint
     # returns up to ~10 positions per call regardless of `num`, so paginate via
@@ -2297,6 +2305,7 @@ SCRAPERS = {
     "Graviton Research Capital": fetch_graviton,
     "Optiver": fetch_optiver,
     "Millennium": fetch_millennium,
+    "XTX Markets": fetch_xtx_markets,
 }
 
 
