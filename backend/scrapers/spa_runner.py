@@ -462,9 +462,9 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # at hdpc.fa.us2.oraclecloud.com siteNumber=CX_2 — far more reliable than
     # the Apollo SPA on higher.gs.com which renders blank for many users).
     # Round 12 SPA additions:
-    # HSBC — uses Avature widget at mycareer.hsbc.com; the SearchJobs URL with
-    # facetcountry=India renders a job card list after JS hydration.
-    ("HSBC", "https://mycareer.hsbc.com/en_GB/external/SearchJobs/?facetcountry=India", None),
+    # HSBC moved to an HTTP scraper in companies.py (Eightfold API at
+    # portal.careers.hsbc.com/api/apply/v2/jobs, ~135 India roles). The old
+    # mycareer.hsbc.com Avature site has no usable JSON endpoint.
     # Housing.com — Freshteam tenant `housing` at housing.freshteam.com.
     # Public REST is auth-walled but /jobs renders all open positions.
     ("Housing.com", "https://housing.freshteam.com/jobs", None),
@@ -476,9 +476,9 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # Standard Chartered uses Avature widget at scb.taleo.net superseded by
     # search.sc.com which is also Avature. Use the public job-search page.
     ("Standard Chartered", "https://scb.wd3.myworkdayjobs.com/en-US/Standard_Chartered_Career_Site?locationCountry=c4f78be1a8f14da0ab49ce1162348a5e", None),
-    # Barclays uses TalentBrew at search.jobs.barclays which is fully SSR but
-    # paginated; the India landing page exposes ~30 cards.
-    ("Barclays", "https://search.jobs.barclays/search-jobs/India", None),
+    # Barclays moved to an HTTP scraper in companies.py — the TalentBrew
+    # /search-jobs/india-jobs/ URL server-side filters to India, works over
+    # plain httpx, and detail pages carry JobPosting JSON-LD datePosted.
     # Nomura uses Workday tenant `nomura` with site name `Career`. The hosted
     # search page works without auth and renders India roles in cards.
     ("Nomura", "https://nomura.wd3.myworkdayjobs.com/en-US/Career?locationCountry=c4f78be1a8f14da0ab49ce1162348a5e", None),

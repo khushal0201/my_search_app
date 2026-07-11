@@ -70,14 +70,14 @@
 [s] Cisco                 (also covers Cisco Webex)
 [s] ServiceNow
 [s] GE Healthcare         (covers GE Healthcare/GE)
-[s] BCG
+[s] BCG                   # DEPRECATED — moved to HTTP (Phenom JSON island), see main list above
 [s] Urban Company
 [s] Infosys
 
 # ---- Wanted, not yet attempted -- needs probing ----
 [x] NoBroker            # SmartRecruiters /nobroker
 [-] BookMyShow         # 403 anti-bot on careers SPA
-[s] Optum               # SPA: careers.unitedhealthgroup.com (UHG portal)
+[s] Optum               # DEPRECATED — moved to HTTP (TalentBrew), see main list above
 [x] NTT Data            # Workday: nttlimited.wd3 / NTT_Careers (~939 jobs)
 [x] EXL                 # Oracle HCM: fa-ewjt-saasfaprod1 / siteNumber=CX_2
 [s] Deloitte            # SPA: southasiacareers.deloitte.com/go/Deloitte-India/718244/
@@ -88,8 +88,8 @@
 [s] Juspay              # SPA: juspay.io/careers (custom in-house)
 [s] Nykaa               # SPA: careers.nykaa.com (custom in-house)
 [-] Insights Global    # US/Canada staffing firm; "INDIA" search returns US jobs with India delivery team
-[s] Moody's             # SPA: careers.moodys.com (best-effort, anti-bot risk)
-[s] Bain                # SPA: bain.com/careers (custom in-house)
+[s] Moody's             # DEPRECATED — moved to HTTP (TalentBrew), see main list above
+[s] Bain                # DEPRECATED — moved to HTTP (bespoke JSON), see main list above
 [s] Bank of America     # SPA: careers.bankofamerica.com (TalentBrew, weak India filter)
 [-] PolicyBazaar        # 404 on /careers; no public ATS endpoint found
 [-] PaisaBazaar         # No ATS — email-only (careers+tech@paisabazaar.com)
@@ -106,16 +106,16 @@
 # ---- Attempted and unsupported (see code comments) ----
 [-] BigBasket             (Darwinbox SPA -- Angular bundle, no anchors)
 [-] MakeMyTrip            (heavy SPA, frame detach)
-[-] Barclays              (TalentBrew JS render only)
+[x] Barclays              # search.jobs.barclays (TalentBrew) — India URL works over httpx
 [-] UBS                   (anti-bot 403)
 [-] Rapido                (Darwinbox SPA)
-[-] HSBC                  (needs session cookies)
+[-] HSBC                  # DEPRECATED — see below [x] HSBC (Eightfold)
 [-] Agoda                 (needs session)
 [-] Volvo Group           (needs session)
 [-] Myntra                (empty 2KB shell)
 [-] LinkedIn              (auth wall)
 [-] Standard Chartered    (needs session)
-[-] Capital One           (TalentBrew JS render only)
+[x] Capital One           # capitalonecareers.com (TalentBrew) — India URL works over httpx
 [-] DoorDash              (403 anti-bot)
 [-] Zomato                (HTTP/2 anti-bot)
 [-] Porter                (Darwinbox SPA)
@@ -123,6 +123,15 @@
 [-] AngelOne              (Open Positions empty until user click)
 [-] Cognizant             (SuccessFactors anti-bot or empty render)
 [-] Wipro                 (SuccessFactors)
+
+[x] HSBC                  # portal.careers.hsbc.com (Eightfold /api/apply/v2/jobs, ~135 India jobs, all dated)
+[x] Wells Fargo           # Workday wf.wd1 / wellsfargojobs (India facet, ~127 jobs, all dated)
+[x] Synopsys              # careers.synopsys.com (TalentBrew, JSON-LD datePosted hydration)
+[x] Optum                 # careers.unitedhealthgroup.com (TalentBrew, JSON-LD datePosted hydration)
+[x] Moody's               # careers.moodys.com (TalentBrew, JSON-LD datePosted hydration)
+[x] Honeywell             # careers.honeywell.com (Oracle HCM ibqbjb.fa.ocs.oraclecloud.com, ~355 India)
+[x] BCG                   # careers.bcg.com (Phenom eagerLoadRefineSearch JSON island)
+[x] Bain                  # bain.com (bespoke /en/api/jobsearch/keyword/get JSON)
 
 # ---- Round 8: Tier 1/Tier 2 product / semis / GCC sweep ----
 # HTTP/JSON scrapers
@@ -157,10 +166,8 @@
 [s] Ola Electric          # olaelectric.com/careers
 [s] Delhivery             # delhivery.com/careers (Nuxt)
 [s] Dream11               # careers.dream11.com
-[s] Honeywell             # careers.honeywell.com (Phenom anti-bot risk)
-[s] Synopsys              # careers.synopsys.com
+# Honeywell/Synopsys/Wells Fargo moved to HTTP scrapers — see main list above.
 [s] Qualcomm              # careers.qualcomm.com
-[s] Wells Fargo           # wellsfargojobs.com (anti-bot risk)
 [s] Fidelity              # jobs.fidelity.com (anti-bot risk)
 
 # Probed but no public ATS found

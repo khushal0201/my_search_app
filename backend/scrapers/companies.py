@@ -1788,6 +1788,93 @@ async def fetch_moodys(client: httpx.AsyncClient, query: str) -> list[Job]:
     )
 
 
+# Capital One — capitalonecareers.com is the same TalentBrew stack as Optum
+# and Synopsys (org_id=1732). The location-jobs URL preserves the India filter
+# across paginated pages (the /search-jobs/India variant loses the filter when
+# ?p=N is appended and falls back to US "featured jobs"). httpx-friendly; no
+# Workday tenant / no Playwright needed. Detail pages carry JobPosting JSON-LD
+# datePosted, hydrated by _fetch_talentbrew_html.
+async def fetch_capital_one(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_talentbrew_html(
+        client, "Capital One",
+        base="https://www.capitalonecareers.com/location/india-jobs/234/1269750/2",
+        org_id="1732", query=query,
+        source="capitalonecareers.com",
+    )
+
+
+# Barclays — search.jobs.barclays is a TalentBrew tenant (org_id=13015). The
+# /search-jobs/india-jobs/ URL server-side filters to India and paginates
+# cleanly over plain httpx. Detail pages carry JobPosting JSON-LD datePosted.
+# Replaces the old Playwright SPA target which returned 0 via the generic
+# anchor extractor.
+async def fetch_barclays(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_talentbrew_html(
+        client, "Barclays",
+        base="https://search.jobs.barclays/search-jobs/india-jobs/",
+        org_id="13015", query=query,
+        source="search.jobs.barclays",
+    )
+
+
+# HSBC — portal.careers.hsbc.com is Eightfold (same v2/jobs API pattern as
+# Netflix and Millennium). The public mycareer.hsbc.com Avature site has no
+# usable JSON endpoint, but the Eightfold portal returns full India results
+# with dates (t_create epoch). API caps `num` at 10; paginate via `start`
+# until we've drained the reported count.
+async def fetch_hsbc(client: httpx.AsyncClient, query: str) -> list[Job]:
+    base = "https://portal.careers.hsbc.com/api/apply/v2/jobs"
+    out: list[Job] = []
+    seen: set[int] = set()
+    start = 0
+    page_size = 10
+    for _ in range(20):  # safety cap: 200 positions scanned
+        params = {
+            "domain": "hsbc.com",
+            "query": query,
+            "location": "India",
+            "start": start,
+            "num": page_size,
+            "sort_by": "timestamp",
+        }
+        try:
+            r = await client.get(base, params=params, headers=DEFAULT_HEADERS, timeout=25)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            log.warning("hsbc eightfold start=%d failed: %s", start, e)
+            break
+        positions = data.get("positions") or []
+        if not positions:
+            break
+        new_count = 0
+        for p in positions:
+            pid = p.get("id")
+            if pid in seen:
+                continue
+            seen.add(pid)
+            loc = p.get("location") or ", ".join(p.get("locations") or [])
+            if not _looks_india(str(loc)):
+                continue
+            out.append(Job(
+                company="HSBC",
+                title=p.get("name") or "",
+                location=str(loc),
+                url=p.get("canonicalPositionUrl")
+                    or f"https://portal.careers.hsbc.com/careers/job/{pid}",
+                posted_at=_parse_dt(p.get("t_create") or p.get("t_update")),
+                source="portal.careers.hsbc.com",
+            ))
+            new_count += 1
+        total = data.get("count") or 0
+        if total and len(seen) >= int(total):
+            break
+        if new_count == 0 and len(positions) < page_size:
+            break
+        start += page_size
+    return out
+
+
 async def fetch_bcg(client: httpx.AsyncClient, query: str) -> list[Job]:
     """BCG (Phenom CMS) inlines results in eagerLoadRefineSearch.data.jobs[]."""
     url = "https://careers.bcg.com/global/en/search-results"
@@ -2317,6 +2404,9 @@ SCRAPERS = {
     "Synopsys": fetch_synopsys,
     "Optum": fetch_optum,
     "Moody's": fetch_moodys,
+    "Capital One": fetch_capital_one,
+    "Barclays": fetch_barclays,
+    "HSBC": fetch_hsbc,
     # Round 8 — Tier 1/Tier 2 product, semis, finance, GCC sweep
     # Workday
     "Zoom": fetch_zoom,
