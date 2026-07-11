@@ -352,7 +352,7 @@ async def _extract_anchor_jobs(page, company: str, source_url: str) -> list[Job]
     # server-side India-filtered but whose card markup doesn't repeat any
     # India token. For these we bypass the India-token gate and treat every
     # job-shaped anchor as India.
-    india_only_companies = {"Wells Fargo"}
+    india_only_companies: set[str] = set()
     company_is_india_only = company in india_only_companies
     for it in items:
         href = it.get("href") or ""
@@ -376,6 +376,24 @@ async def _extract_anchor_jobs(page, company: str, source_url: str) -> list[Job]
             company=company, title=title, location=loc,
             url=href, posted_at=None,
             source=source_url.split("?")[0],
+        ))
+    return out
+
+
+    out: list[Job] = []
+    for it in items or []:
+        href = it.get("href") or ""
+        rel = href
+        if href.startswith("/"):
+            href = "https://www.wellsfargojobs.com" + href
+        loc = it.get("loc") or "India"
+        out.append(Job(
+            company="Wells Fargo",
+            title=it.get("title") or "",
+            location=loc,
+            url=href,
+            posted_at=_parse_dt(dates.get(rel)),
+            source="wellsfargojobs.com",
         ))
     return out
 
@@ -435,9 +453,10 @@ SPA_TARGETS: list[tuple[str, str, Optional[Callable]]] = [
     # Qualcomm — Eightfold SSR returns only one spotlight role; the rendered
     # SPA at this URL exposes per-role anchors with /careers/job/<id>.
     ("Qualcomm", "https://careers.qualcomm.com/careers?location=India&pid=446716678737&sort_by=timestamp", None),
-    # Wells Fargo — the old /en/search-jobs/India path now 404s. The
-    # ?country=India filter on /en/jobs/ returns ~10 India roles per page.
-    ("Wells Fargo", "https://www.wellsfargojobs.com/en/jobs/?country=India", None),
+    # Wells Fargo moved to an HTTP scraper in companies.py (Workday CXS API at
+    # wf.wd1.myworkdayjobs.com/wellsfargojobs). The Workday JSON carries dates
+    # (postedOn) and is httpx-friendly, unlike the Cloudflare-protected Phenom
+    # site — so no Playwright, no rate limiting, and every job has a date.
     ("Fidelity", "https://jobs.fidelity.com/en/search-jobs/India", None),
     # Goldman Sachs moved to HTTP scraper in companies.py (Oracle HCM REST API
     # at hdpc.fa.us2.oraclecloud.com siteNumber=CX_2 — far more reliable than

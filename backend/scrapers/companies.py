@@ -20,6 +20,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from dateutil import parser as dateparser
@@ -632,6 +633,35 @@ async def _hydrate_citi_dates(client: httpx.AsyncClient, jobs: list[Job]) -> Non
     await asyncio.gather(*[_one(j) for j in jobs], return_exceptions=True)
 
 
+async def _hydrate_jsonld_dates(
+    client: httpx.AsyncClient, jobs: list[Job], concurrency: int = 8,
+) -> None:
+    """Fill Job.posted_at from each detail page's JobPosting JSON-LD datePosted.
+
+    Generic version of _hydrate_citi_dates for any scraper whose listing markup
+    omits the date but whose detail pages embed ``"datePosted": "..."`` (e.g.
+    TalentBrew tenants: Synopsys, Optum, Moody's). Only fetches jobs that don't
+    already have a date. Bounded concurrency keeps the source from being hit
+    too hard on large result sets.
+    """
+    targets = [j for j in jobs if j.posted_at is None and j.url]
+    if not targets:
+        return
+    sem = asyncio.Semaphore(concurrency)
+    async def _one(job: Job) -> None:
+        async with sem:
+            try:
+                r = await client.get(job.url, headers=DEFAULT_HEADERS, timeout=15)
+                if r.status_code != 200:
+                    return
+                m = re.search(r'"datePosted"\s*:\s*"([^"]+)"', r.text)
+                if m:
+                    job.posted_at = _parse_dt(m.group(1))
+            except Exception:
+                pass
+    await asyncio.gather(*[_one(j) for j in targets], return_exceptions=True)
+
+
 # ---------------------------------------------------------------------------
 # Goldman Sachs — higher.gs.com migrated to a client-rendered Apollo SPA.
 # The __NEXT_DATA__ blob is now an empty skeleton, so this scraper has been
@@ -1056,6 +1086,20 @@ async def fetch_dbs(client: httpx.AsyncClient, query: str) -> list[Job]:
         "https://dbs.wd3.myworkdayjobs.com", "DBS_Careers", "dbs", query,
         india_location_facet=[_INDIA_COUNTRY_ID],
         max_pages=25,
+    )
+
+
+# Wells Fargo — Workday tenant `wf` (wd1), site `wellsfargojobs`. The public
+# wellsfargojobs.com site (Phenom/Umbraco) is Cloudflare-protected and carries
+# no dates in its listing, but the underlying Workday CXS API is httpx-friendly
+# and returns locationsText + postedOn per job. ~127 India roles via the
+# standard India locationCountry facet. Replaces the old Playwright SPA target.
+async def fetch_wells_fargo(client: httpx.AsyncClient, query: str) -> list[Job]:
+    return await _fetch_workday(
+        client, "Wells Fargo",
+        "https://wf.wd1.myworkdayjobs.com", "wellsfargojobs", "wf", query,
+        india_location_facet=[_INDIA_COUNTRY_ID],
+        max_pages=12,
     )
 
 
@@ -1696,8 +1740,13 @@ async def _fetch_talentbrew_html(
                 continue
             seen.add(jid)
             added += 1
+            # Build the detail URL from the site origin + href. The href is
+            # already an absolute path (e.g. /job/... or /en/job/...), so we
+            # must NOT strip only '/search-jobs' from base — Moody's base ends
+            # in '/en/search-jobs', which would double the '/en' and 404.
+            _o = urlsplit(base)
             full_url = href if href.startswith("http") else (
-                base.split("/search-jobs")[0].rstrip("/") + href
+                f"{_o.scheme}://{_o.netloc}" + href
             )
             out.append(Job(
                 company=company, title=title,
@@ -1706,6 +1755,9 @@ async def _fetch_talentbrew_html(
             ))
         if added == 0:
             break
+    # TalentBrew listing anchors carry no date; each detail page embeds a
+    # JobPosting JSON-LD with datePosted. Hydrate them (bounded concurrency).
+    await _hydrate_jsonld_dates(client, out)
     return out
 
 
@@ -2015,8 +2067,8 @@ async def fetch_booking(client: httpx.AsyncClient, query: str) -> list[Job]:
                 title=j.get("title", ""),
                 location=loc,
                 url=f"https://jobs.booking.com/booking/jobs/{slug}",
-                posted_at=_parse_dt(j.get("createdAt") or j.get("publishedAt")
-                                     or j.get("published_at")),
+                posted_at=_parse_dt(j.get("posted_date") or j.get("create_date")
+                                     or j.get("update_date")),
                 source="jobs.booking.com",
             ))
         total = data.get("totalCount") or data.get("count")
@@ -2240,6 +2292,7 @@ SCRAPERS = {
     "Uber": fetch_uber,
     "Accenture": fetch_accenture,
     "DBS": fetch_dbs,
+    "Wells Fargo": fetch_wells_fargo,
     "Slack": fetch_slack,
     # Round 5 — wishlist sweep
     "Nike": fetch_nike,
